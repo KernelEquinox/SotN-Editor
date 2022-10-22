@@ -140,7 +140,7 @@ class Utils {
         static byte* GetPixels(const GLuint texture, uint x, uint y, uint width, uint height);
         static void SetPixels(const GLuint texture, uint x, uint y, uint width, uint height, byte* pixels);
         static std::string ReadSotnString(const byte* data);
-        static void FindReplace(std::string* str, std::string find, std::string replace);
+        static void FindReplace(std::string* str, const std::string& find, const std::string& replace);
         static void SJIS_to_ASCII(std::string* str);
 
 

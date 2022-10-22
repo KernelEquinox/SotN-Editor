@@ -10,11 +10,19 @@
 #include <GLFW/glfw3.h>
 #include "common.h"
 #include "utils.h"
+#include "log.h"
 
 
 
 
-// Convert a 16-bit RGB1555 value to a 32-bit RGBA value
+/**
+ * Converts a 16-bit RGB1555 value to a 32-bit RGBA value.
+ *
+ * @param color: RGB1555 color to be converted
+ *
+ * @return 32-bit RGBA representation of the color
+ *
+ */
 uint Utils::RGB1555_to_RGBA(ushort color) {
 
 	// Get the RGB1555 components
@@ -35,7 +43,14 @@ uint Utils::RGB1555_to_RGBA(ushort color) {
 
 
 
-// Convert a 32-bit RGBA value to a 16-bit RGB1555 value
+/**
+ * Converts a 32-bit RGBA value to a 16-bit RGB1555 value.
+ *
+ * @param color: RGBA color to be converted
+ *
+ * @return 16-bit RGB1555 representation of the color
+ *
+ */
 ushort Utils::RGBA_to_RGB1555(uint color) {
 
     // Get the RGB components
@@ -53,7 +68,17 @@ ushort Utils::RGBA_to_RGB1555(uint color) {
 
 
 
-// Convert an indexed series of bytes to their RGBA equivalent
+/**
+ * Converts an indexed series of bytes to their RGBA equivalent.
+ *
+ * @param data: Buffer of indexed bytes to be converted
+ * @param num_bytes: Number of bytes to be converted
+ *
+ * @return Buffer containing the RGBA representation of the indexed bytes.
+ *
+ * @note This is mostly used for OpenGL texture processing.
+ *
+ */
 byte* Utils::Indexed_to_RGBA(const byte* data, uint num_bytes) {
 
 	// Convert file data to RGBA pixels
@@ -81,7 +106,17 @@ byte* Utils::Indexed_to_RGBA(const byte* data, uint num_bytes) {
 
 
 
-// Convert a series of RGBA bytes to their indexed equivalents
+/**
+ * Converts a series of RGBA bytes to their indexed equivalents.
+ *
+ * @param data: Buffer of RGBA bytes to be converted
+ * @param num_bytes: Number of bytes to be converted
+ *
+ * @return Buffer containing the indexed representation of the RGBA bytes.
+ *
+ * @note This is mostly used for PSX VRAM processing.
+ *
+ */
 byte* Utils::RGBA_to_Indexed(const byte* data, uint num_bytes) {
 
     // Convert file data to RGBA pixels
@@ -106,7 +141,15 @@ byte* Utils::RGBA_to_Indexed(const byte* data, uint num_bytes) {
 
 
 
-// Convert a buffer of RGBA1555 CLUT data to the RGBA equivalent
+/**
+ * Converts a buffer of RGBA1555 CLUT data to its RGBA equivalent.
+ *
+ * @param src: Buffer of RGBA1555 bytes to be converted
+ * @param dst: Buffer where the 32-bit RGBA values should be written
+ * @param num_cluts: Number of CLUTs to process
+ * @param semi_opaque: Whether the RGBA values should support partial alpha values
+ *
+ */
 void Utils::CLUT_to_RGBA(const byte* src, const byte* dst, int num_cluts, bool semi_opaque) {
 
     // Convert RGB1555 CLUT to RGBA CLUT
@@ -134,7 +177,16 @@ void Utils::CLUT_to_RGBA(const byte* src, const byte* dst, int num_cluts, bool s
 
 
 
-// Create a texture out of source data
+/**
+ * Creates a texture from a buffer of RGBA data.
+ *
+ * @param data: Buffer of RGBA bytes for the texture
+ * @param width: Width of the texture
+ * @param height: Height of the texture
+ *
+ * @return ID of the newly-created texture.
+ *
+ */
 GLuint Utils::CreateTexture(void* data, int width, int height) {
 
     // Initialize the texture
@@ -161,9 +213,18 @@ GLuint Utils::CreateTexture(void* data, int width, int height) {
 }
 
 
-
-// Convert indexed image + CLUT into RGBA data
-// Returns the number of non-empty pixels
+/**
+ * Applies a CLUT's RGBA values to an indexed pixel buffer to create an RGBA representation of the data.
+ *
+ * @param pixels: Buffer of indexed pixel bytes
+ * @param clut: Buffer of RGBA CLUT data
+ * @param width: Width of the rectangle being processed
+ * @param height: Height of the rectangle being processed
+ * @param output: Buffer where the 32-bit RGBA values should be written
+ *
+ * @return The number of non-blank pixels that were written
+ *
+ */
 uint Utils::VRAM_to_RGBA(const byte* pixels, const byte* clut, uint width, uint height, byte* output) {
 
     // Number of opaque pixels
@@ -235,22 +296,39 @@ uint Utils::VRAM_to_RGBA(const byte* pixels, const byte* clut, uint width, uint 
 
 
 
-// Dump [num_bytes] from [buf]
+/**
+ * Prints a buffer of bytes in hexadecimal format.
+ *
+ * @param buf: Buffer of data to read
+ * @param num_bytes: Number of bytes to read
+ *
+ */
 void Utils::HexDump(const byte* buf, const uint num_bytes) {
 
     // Print each byte
     for (int i = 0; i < num_bytes; i++) {
         if (i % 16 == 0) {
-            printf("\n");
+            Log::Debug("\n");
         }
-        printf("%02X ", *(byte*)(buf + i));
+        Log::Debug("%02X ", *(byte*)(buf + i));
     }
-    printf("\n");
+    Log::Debug("\n");
 }
 
 
 
-// Helper function to get pixels from a given texture
+/**
+ * Retrieves the RGBA pixels from a texture.
+ *
+ * @param texture: ID of the texture to get pixels from
+ * @param x: X coordinate of the location within the texture
+ * @param y: Y coordinate of the location within the texture
+ * @param width: Width of the section to read from the texture
+ * @param height: Height of the section to read from the texture
+ *
+ * @return Buffer of RGBA pixels read from the texture.
+ *
+ */
 byte* Utils::GetPixels(const GLuint texture, uint x, uint y, uint width, uint height) {
 
     // Pixels to return
@@ -267,6 +345,17 @@ byte* Utils::GetPixels(const GLuint texture, uint x, uint y, uint width, uint he
 
 
 // Helper function to set a range of pixels for a given texture
+/**
+ * Writes RGBA pixels to a texture.
+ *
+ * @param texture: ID of the texture to write to
+ * @param x: X coordinate of the location within the texture
+ * @param y: Y coordinate of the location within the texture
+ * @param width: Width of the section to write to the texture
+ * @param height: Height of the section to write to the texture
+ * @param pixels: Buffer of RGBA pixels to write
+ *
+ */
 void Utils::SetPixels(const GLuint texture, uint x, uint y, uint width, uint height, byte *pixels) {
 
     // Bind to the target texture
@@ -287,7 +376,14 @@ void Utils::SetPixels(const GLuint texture, uint x, uint y, uint width, uint hei
 
 
 
-// Convert a SotN format string to a regular ASCII string
+/**
+ * Converts a SotN-format string to a regular ASCII string
+ *
+ * @param data: Buffer containing a SotN-format string
+ *
+ * @return String in ASCII format
+ *
+ */
 std::string Utils::ReadSotnString(const byte* data) {
 
     byte cur_char = *(byte*)(data);
@@ -299,27 +395,41 @@ std::string Utils::ReadSotnString(const byte* data) {
         cur_char = *(byte*)(data + count);
     }
 
-    // Copy the bytes to a new buffer
-    byte* new_string = (byte*)calloc(count, sizeof(byte));
-    memcpy(new_string, data, count);
-
-    // Convert each character
-    for (int i = 0; i < count; i++) {
-        *(new_string + i) += 0x20;
-    }
-
-    // Return a null pointer if string is null
-    if (new_string[0] == 0) {
+    // Bail if this is an empty string
+    if (count == 0) {
         return "";
     }
 
+    // Copy the bytes to a new buffer (with null terminator)
+    byte* char_buf = (byte*)calloc(count + 1, sizeof(byte));
+    memcpy(char_buf, data, count);
+
+    // Convert each character
+    for (int i = 0; i < count; i++) {
+        *(char_buf + i) += 0x20;
+    }
+
+    // Form a new string from the byte array
+    std::string new_string = std::string((char*)char_buf);
+
+    // Free the allocated character buffer
+    free(char_buf);
+
     // Return the byte array as a string (parameters are passed as string initializer args)
-    return {(char*)new_string, count};
+    return new_string;
 }
 
 
 
-void Utils::FindReplace(std::string* str, std::string find, std::string replace) {
+/**
+ * Finds a value in a string and replaces it with another value.
+ *
+ * @param str: String to be processed
+ * @param find: Value to find in the string
+ * @param replace: Value to replace any found occurrences with
+ *
+ */
+void Utils::FindReplace(std::string* str, const std::string& find, const std::string& replace) {
 
     // Current position in the string to search
     uint cur_pos = 0;
@@ -346,6 +456,14 @@ void Utils::FindReplace(std::string* str, std::string find, std::string replace)
 
 
 // Convert a string with SJIS chars into an ASCII string
+/**
+ * Converts a string with Shift-JIS characters into an ASCII string.
+ *
+ * @param str: String to be processed
+ *
+ * @note This utilizes a lookup table of SJIS->ASCII values as defined in the "utils.h" file.
+ *
+ */
 void Utils::SJIS_to_ASCII(std::string* str) {
 
     uint replaced = 0;

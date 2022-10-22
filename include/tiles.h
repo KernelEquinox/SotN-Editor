@@ -15,7 +15,7 @@ class Tile {
     public:
 
         // Texture for the tile
-        GLuint texture;
+        GLuint texture = -1;
 
         // Whether the tile is selected
         bool selected = false;
@@ -32,10 +32,6 @@ class Tile {
 };
 
 
-
-/*
- * FREE WHEN DONE
- */
 // Tile data class (to prevent allocations for every tile layer)
 class TileData {
 
@@ -60,20 +56,24 @@ class TileLayer {
     public:
 
         // Indices used for pulling data from the tile definition arrays
-        ushort* tile_indices;
+        ushort* tile_indices = {};
 
         // Pointer to a tile data object (to prevent unnecessary allocations)
-        TileData tile_data;
+        TileData tile_data = {};
+
+        // Address of tile indices and tile data (used for entity processing)
+        uint tile_indices_addr = 0;
+        uint tile_data_addr = 0;
 
         // Layer dimensions
-        byte x_start;
-        byte y_start;
-        byte x_end;
-        byte y_end;
+        byte x_start = 0;
+        byte y_start = 0;
+        byte x_end = 0;
+        byte y_end = 0;
 
         // Layer dimensions in tiles
-        uint width;
-        uint height;
+        uint width = 0;
+        uint height = 0;
 
         // Force load tileset/room if >= 0x80, otherwise flag on 0x10, 0x20, 0x40
         //
@@ -81,16 +81,16 @@ class TileLayer {
         //     This also allows Alucard's X/Y position to be retained in the next room
         //     if the values are less than 0x80.
         //
-        byte load_flags;
+        byte load_flags = 0;
 
         // Z-index of the layer
-        ushort z_index;
+        ushort z_index = 0;
 
         // Drawing flags
-        ushort drawing_flags;
+        ushort drawing_flags = 0;
 
         // List of tile objects
-        std::vector<Tile> tiles;
+        std::vector<Tile> tiles = {};
 
 
 

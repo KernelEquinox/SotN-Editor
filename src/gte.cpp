@@ -1,10 +1,12 @@
 #include <algorithm>
+#include <stdexcept>
 #include "gte.h"
+#include "mips.h"
+#include "log.h"
 
 
 
 // Variables
-uint GteEmulator::registers[64];
 bool GteEmulator::debug;
 
 // Data registers
@@ -41,14 +43,10 @@ uint GteEmulator::FLAG;
 
 
 
-// Initializes the GTE emulator
+/**
+ * Initializes the GTE emulator.
+ */
 void GteEmulator::Initialize() {
-
-    // Clear out the registers
-    for (uint i = 0; i < 64; i++)
-    {
-        registers[i] = 0;
-    }
 
     for (int y = 0; y < 3; y++) {
         RGBC_FIFO[y].r = 0;
@@ -97,7 +95,12 @@ void GteEmulator::Initialize() {
 
 
 
-// Processes a GTE opcode
+/**
+ * Processes a GTE opcode and calls the appropriate function.
+ *
+ * @param opcode: 32-bit instruction to execute
+ *
+ */
 void GteEmulator::ProcessOpcode(uint opcode) {
 
     // GTE command
@@ -105,7 +108,7 @@ void GteEmulator::ProcessOpcode(uint opcode) {
 
     // Bits 6-9 are ignored
 
-    // Saturate IR[123] result (A1/2/3 limiter)
+    // Whether IR[123] limiter result is signed (0) or unsigned (1)
     uint lm = (opcode >> 10) & 1;
 
     // Bits 11-12 are ignored
@@ -119,7 +122,7 @@ void GteEmulator::ProcessOpcode(uint opcode) {
     // MVMVA Multiply Matrix
     uint mm = (opcode >> 17 & 3);
 
-    // Scaling Format (for IR registers)
+    // Scaling Factor
     //     0 = No fraction
     //     1 = 12-bit fraction
     uint sf = ((opcode >> 19) & 1) * 12;
@@ -138,6 +141,16 @@ void GteEmulator::ProcessOpcode(uint opcode) {
     gte_funcs[command](lm, tv, mv, mm, sf);
 }
 
+/**
+ * Reads a value from a data register.
+ *
+ * @param num: Register number to read from
+ *
+ * @return 32-bit value of the specified register.
+ *
+ * @throw out_of_range: Thrown if register number does not exist.
+ *
+ */
 uint GteEmulator::ReadDataRegister(uint num) {
 
     // Check which data register to read from
@@ -189,7 +202,11 @@ uint GteEmulator::ReadDataRegister(uint num) {
         case 22:
             return RGBC_FIFO[2].r | (RGBC_FIFO[2].g << 8) | (RGBC_FIFO[2].b << 16) | (RGBC_FIFO[2].cd << 24);
         case 23:
-            printf("[!] Attempted to read RES1. Please do not do that.\n");
+            Log::Debug(
+        "PC: %08X  % 6d    [!] Attempted to read RES1. Please do not do that.\n",
+        MipsEmulator::pc + RAM_BASE_OFFSET,
+        MipsEmulator::num_executed
+    );
             return 0;
         case 24:
             return MAC[0];
@@ -211,10 +228,19 @@ uint GteEmulator::ReadDataRegister(uint num) {
         case 31:
             return LZCR;
         default:
-            return 0;
+            throw std::out_of_range("GTE ERROR: Attempted to read from invalid data register index: " + std::to_string(num));
     }
 }
 
+/**
+ * Writes a value to a data register.
+ *
+ * @param num: Register number to write to
+ * @param value: Value to write to the specified register
+ *
+ * @throw out_of_range: Thrown if register number does not exist.
+ *
+ */
 void GteEmulator::WriteDataRegister(uint num, uint value) {
 
     // Check which data register to write to
@@ -315,7 +341,11 @@ void GteEmulator::WriteDataRegister(uint num, uint value) {
             RGBC_FIFO[2].cd = value >> 24;
             break;
         case 23:
-            printf("[!] Attempted to write to RES1. Please do not do that.\n");
+            Log::Debug(
+        "PC: %08X  % 6d    [!] Attempted to write to RES1. Please do not do that.\n",
+        MipsEmulator::pc + RAM_BASE_OFFSET,
+        MipsEmulator::num_executed
+    );
             break;
         case 24:
             MAC[0] = value;
@@ -335,7 +365,11 @@ void GteEmulator::WriteDataRegister(uint num, uint value) {
             IR[2] = ((value >> 10) & 0x1F) << 7;
             break;
         case 29:
-            printf("[!] Attempted to write to ORGB. Please do not do that.\n");
+            Log::Debug(
+        "PC: %08X  % 6d    [!] Attempted to write to ORGB. Please do not do that.\n",
+        MipsEmulator::pc + RAM_BASE_OFFSET,
+        MipsEmulator::num_executed
+    );
             break;
         case 30:
             LZCS = value;
@@ -351,12 +385,25 @@ void GteEmulator::WriteDataRegister(uint num, uint value) {
             }
             break;
         case 31:
-            printf("[!] Attempted to write to LZCR. Please do not do that.\n");
+            Log::Debug(
+        "PC: %08X  % 6d    [!] Attempted to write to LZCR. Please do not do that.\n",
+        MipsEmulator::pc + RAM_BASE_OFFSET,
+        MipsEmulator::num_executed
+    );
         default:
-            break;
+            throw std::out_of_range("GTE ERROR: Attempted to write to invalid data register index: " + std::to_string(num));
     }
 }
-
+/**
+ * Reads a value from a control register.
+ *
+ * @param num: Register number to read from
+ *
+ * @return 32-bit value of the specified register.
+ *
+ * @throw out_of_range: Thrown if register number does not exist.
+ *
+ */
 uint GteEmulator::ReadControlRegister(uint num) {
 
     // Check which control register to read from
@@ -425,9 +472,20 @@ uint GteEmulator::ReadControlRegister(uint num) {
             return ZSF4;
         case 31:
             return FLAG;
+        default:
+            throw std::out_of_range("GTE ERROR: Attempted to read from invalid control register index: " + std::to_string(num));
     }
 }
 
+/**
+ * Writes a value to a control register.
+ *
+ * @param num: Register number to write to
+ * @param value: Value to write to the specified register
+ *
+ * @throw out_of_range: Thrown if register number does not exist.
+ *
+ */
 void GteEmulator::WriteControlRegister(uint num, uint value) {
 
     // Check which data register to write to
@@ -541,7 +599,7 @@ void GteEmulator::WriteControlRegister(uint num, uint value) {
             FLAG = value;
             break;
         default:
-            break;
+            throw std::out_of_range("GTE ERROR: Attempted to write to invalid control register index: " + std::to_string(num));
     }
 }
 
@@ -552,42 +610,71 @@ void GteEmulator::WriteControlRegister(uint num, uint value) {
 
 // -- Helper Functions -------------------------------------------------------------------------------------------
 
-// Get the number of leading zeros in a given [x]-bit value
+/**
+ * Gets the number of leading zeroes in a given [x]-bit value.
+ *
+ * @param value: Value to count leading zeroes for
+ * @param num_bits: Bit size of the number
+ *
+ * @return Number of leading zeroes
+ *
+ */
 uint GteEmulator::CountLeadingZeros(uint value, uint num_bits) {
-    uint count = 0;
-    num_bits -= 1;
-    uint mask = 1 << num_bits;
-    for (count = 0; count < num_bits; count++) {
-        if (value & (mask >> count)) {
-            break;
-        }
+
+    // Return value for number of leading zeroes
+    int count;
+
+    // Fill with 1 starting from leftmost occurrence
+    value |= (value >> 1);
+    value |= (value >> 2);
+    value |= (value >> 4);
+    value |= (value >> 8);
+    value |= (value >> 16);
+
+    // Flip all the bits
+    value = ~value;
+
+    // Truncate to only the specified number of bits
+    value &= (int64)((uint64_t)-1 >> (64 - num_bits));
+
+    // Count the number now-set bits
+    for (count = 0; value != 0; value &= (value - 1)) {
+        count++;
     }
     return count;
 }
 
-// Check for any overflows or underflows in calculation
+/**
+ * Check for any overflows or underflows resulting from a calculation.
+ *
+ * @param x: Number to check bounds for
+ * @param flag_num: Limiter flag being checked against
+ *
+ * @return 32-bit value of the input number
+ *
+ */
 static inline int CheckCalcBounds(int64 x, int flag_num) {
 
     // Check for bits 30-28 (overflow) and 27-25 (underflow)
     if (flag_num < 4) {
-        if (x > 0x7FFFFFFFFFF) {
-            GteEmulator::FLAG |= 30 - (flag_num - 1);
+        if (x >= 0x80000000000) {
+            GteEmulator::FLAG |= 1 << (30 - (flag_num - 1));
         }
-        else if (x < -0x80000000000) {
-            GteEmulator::FLAG |= 27 - (flag_num - 1);
+        if (x < -0x80000000000) {
+            GteEmulator::FLAG |= 1 << (27 - (flag_num - 1));
         }
 
         // Sign extend the value of X
-        x = (x << 20) >> 20;
+        x = (int64_t)((uint64_t)x << 20) >> 20;
     }
 
     // Only other case is flag_num == 4
     else {
         if (x > 0x7FFFFFFF) {
-            GteEmulator::FLAG |= 16;
+            GteEmulator::FLAG |= 1 << 16;
         }
-        else if (x < -0x80000000) {
-            GteEmulator::FLAG |= 15;
+        if (x < -RAM_BASE_OFFSET) {
+            GteEmulator::FLAG |= 1 << 15;
         }
     }
 
@@ -595,7 +682,17 @@ static inline int CheckCalcBounds(int64 x, int flag_num) {
     return (int)(x & 0xFFFFFFFF);
 }
 
-// Divide
+/**
+ * Performs integer division on two numbers.
+ *
+ * @param dividend: Number to be divided
+ * @param divisor: Number used to divide the dividend
+ *
+ * @return The result of the integer division
+ *
+ * @note Flag 17 is set if a vertex exceeds the near clipping plane.
+ *
+ */
 static inline uint divide(uint dividend, uint divisor) {
 
     // Check for division overflow
@@ -619,97 +716,225 @@ static inline uint divide(uint dividend, uint divisor) {
         int num2 = (0x80 + (div_val * (0x20000 + num1))) >> 8;
 
         // Find the final value
-        uint result = ((ulong)dividend * num2 + 0x8000) >> 16;
-        return std::min<uint>(0x1FFFF, result);
+        uint quotient = ((ulong)dividend * num2 + 0x8000) >> 16;
+        return std::min<uint>(0x1FFFF, quotient);
     }
 
     // Division overflow
     else {
-        GteEmulator::FLAG |= (1 << 17);
+        GteEmulator::FLAG |= 1 << 17;
         return 0x1FFFF;
     }
 }
 
+/**
+ * Truncates a number to fit within the bounds of -0x8000 and 0x7FFF.
+ *
+ * @param x: Number to truncate
+ *
+ * @return Truncated value
+ *
+ * @note Sets flag 24 if truncation was performed.
+ */
 static inline short limA1S(int64 x) {
     short result = (short)std::clamp<int64>(x, -0x8000, 0x7FFF);
     GteEmulator::FLAG |= (result != x) << 24;
     return result;
 }
 
+/**
+ * Truncates a number to fit within the bounds of -0x8000 and 0x7FFF.
+ *
+ * @param x: Number to truncate
+ *
+ * @return Truncated value
+ *
+ * @note Sets flag 23 if truncation was performed.
+ */
 static inline short limA2S(int64 x) {
     short result = (short)std::clamp<int64>(x, -0x8000, 0x7FFF);
     GteEmulator::FLAG |= (result != x) << 23;
     return result;
 }
 
+/**
+ * Truncates a number to fit within the bounds of -0x8000 and 0x7FFF.
+ *
+ * @param x: Number to truncate
+ *
+ * @return Truncated value
+ *
+ * @note Sets flag 22 if truncation was performed.
+ */
 static inline short limA3S(int64 x) {
     short result = (short)std::clamp<int64>(x, -0x8000, 0x7FFF);
     GteEmulator::FLAG |= (result != x) << 22;
     return result;
 }
 
+/**
+ * Truncates a number to fit within the bounds of 0 and 0x7FFF.
+ *
+ * @param x: Number to truncate
+ *
+ * @return Truncated value
+ *
+ * @note Sets flag 24 if truncation was performed.
+ */
 static inline short limA1U(int64 x) {
     short result = (short)std::clamp<int64>(x, 0, 0x7FFF);
     GteEmulator::FLAG |= (result != x) << 24;
     return result;
 }
 
+/**
+ * Truncates a number to fit within the bounds of 0 and 0x7FFF.
+ *
+ * @param x: Number to truncate
+ *
+ * @return Truncated value
+ *
+ * @note Sets flag 23 if truncation was performed.
+ */
 static inline short limA2U(int64 x) {
     short result = (short)std::clamp<int64>(x, 0, 0x7FFF);
     GteEmulator::FLAG |= (result != x) << 23;
     return result;
 }
 
+/**
+ * Truncates a number to fit within the bounds of 0 and 0x7FFF.
+ *
+ * @param x: Number to truncate
+ *
+ * @return Truncated value
+ *
+ * @note Sets flag 22 if truncation was performed.
+ */
 static inline short limA3U(int64 x) {
     short result = (short)std::clamp<int64>(x, 0, 0x7FFF);
     GteEmulator::FLAG |= (result != x) << 22;
     return result;
 }
 
+/**
+ * Truncates a number to fit within the bounds of 0 and 0xFF.
+ *
+ * @param x: Number to truncate
+ *
+ * @return Truncated value
+ *
+ * @note Sets flag 21 if truncation was performed.
+ */
 static inline ushort limB1(int64 x) {
     short result = (short)std::clamp<int64>(x, 0, 0xFF);
     GteEmulator::FLAG |= (result != x) << 21;
     return result;
 }
 
+/**
+ * Truncates a number to fit within the bounds of 0 and 0xFF.
+ *
+ * @param x: Number to truncate
+ *
+ * @return Truncated value
+ *
+ * @note Sets flag 20 if truncation was performed.
+ */
 static inline ushort limB2(int64 x) {
     short result = (short)std::clamp<int64>(x, 0, 0xFF);
     GteEmulator::FLAG |= (result != x) << 20;
     return result;
 }
 
+/**
+ * Truncates a number to fit within the bounds of 0 and 0xFF.
+ *
+ * @param x: Number to truncate
+ *
+ * @return Truncated value
+ *
+ * @note Sets flag 19 if truncation was performed.
+ */
 static inline ushort limB3(int64 x) {
     short result = (short)std::clamp<int64>(x, 0, 0xFF);
     GteEmulator::FLAG |= (result != x) << 19;
     return result;
 }
 
+/**
+ * Truncates a number to fit within the bounds of 0 and 0xFFFF.
+ *
+ * @param x: Number to truncate
+ *
+ * @return Truncated value
+ *
+ * @note Sets flag 18 if truncation was performed.
+ */
 static inline short limC(int64 x) {
     short result = (short)std::clamp<int64>(x, 0, 0xFFFF);
     GteEmulator::FLAG |= (result != x) << 18;
     return result;
 }
 
+/**
+ * Truncates a number to fit within the bounds of -0x400 and 0x3FF.
+ *
+ * @param x: Number to truncate
+ *
+ * @return Truncated value
+ *
+ * @note Sets flag 14 if truncation was performed.
+ */
 static inline short limD1(int64 x) {
     short result = (short)std::clamp<int64>(x, -0x400, 0x3FF);
     GteEmulator::FLAG |= (result != x) << 14;
     return result;
 }
 
+/**
+ * Truncates a number to fit within the bounds of -0x400 and 0x3FF.
+ *
+ * @param x: Number to truncate
+ *
+ * @return Truncated value
+ *
+ * @note Sets flag 13 if truncation was performed.
+ */
 static inline short limD2(int64 x) {
     short result = (short)std::clamp<int64>(x, -0x400, 0x3FF);
     GteEmulator::FLAG |= (result != x) << 13;
     return result;
 }
 
+/**
+ * Truncates a number to fit within the bounds of 0 and 0xFFF.
+ *
+ * @param x: Number to truncate
+ *
+ * @return Truncated value
+ *
+ * @note Sets flag 12 if truncation was performed.
+ */
 static inline short limE(int64 x) {
     short result = (short)std::clamp<int64>(x, 0, 0xFFF);
     GteEmulator::FLAG |= (result != x) << 12;
     return result;
 }
 
-// Multiplies a 3x3 matrix with a 3-item vector
-static inline void MxV(gte_vec3i base, short mtx[3][3], short vec[3], uint lm, uint sf, bool fc = false) {
+/**
+ * Multiplies a 3x3 matrix with a 3-item vector and sets MAC/IR registers accordingly.
+ *
+ * @param base: Base value added to the multiplication result
+ * @param mtx: 3x3 matrix to be multiplied
+ * @param vec: 3-item vector to be multiplied
+ * @param lm: Flag that determines which limiter should be utilized
+ * @param sf: Scale factor
+ * @param fc: Whether this is a Far Color calculation
+ *
+ * @note Far Color calculation is bugged. See function comments for details.
+ */
+static inline void MxV(const gte_vec3i& base, const short mtx[3][3], const short vec[3], uint lm, uint sf, bool fc = false) {
 
     // Expand base values
     int64 base1 = base.x << 12;
@@ -737,7 +962,7 @@ static inline void MxV(gte_vec3i base, short mtx[3][3], short vec[3], uint lm, u
     //
     //     Formula:  (base + MX11*V0 + MX12*V1 + MX13*V2) >> SF*12
     //
-    //     Omit:     (base + MX11*V0 + MX12*V1)
+    //     Ignore:   (base + MX11*V0 + MX12*V1)
     //     Process:                              (MX13*V2) >> SF*12
     //
     if (fc) {
@@ -782,17 +1007,24 @@ static inline void MxV(gte_vec3i base, short mtx[3][3], short vec[3], uint lm, u
 
 // -- GTE Instructions -------------------------------------------------------------------------------------------
 
+/**
+ * NOP
+ */
 void GteEmulator::gte_nop(uint lm, uint tv, uint mv, uint mm, uint sf) {
 
 }
 
 
-// Rotate, Translate, Perspective (Single)
+/**
+ * Rotate, Translate, Perspective (Single)
+ */
 void GteEmulator::gte_RTPS(uint lm, uint tv, uint mv, uint mm, uint sf) {
 
-    if (debug) {
-        printf("GTE :: RTPS\n");
-    }
+    Log::Debug(
+        "PC: %08X  % 6d    GTE :: RTPS\n",
+        MipsEmulator::pc + RAM_BASE_OFFSET,
+        MipsEmulator::num_executed
+    );
 
     MxV(TRANS_VEC, ROT_MTX, VX[0], lm, sf);
 
@@ -818,21 +1050,16 @@ void GteEmulator::gte_RTPS(uint lm, uint tv, uint mv, uint mm, uint sf) {
     MAC[0] = P;
 }
 
-// Normal Clipping
+/**
+ * Normal Clipping
+ */
 void GteEmulator::gte_NCLIP(uint lm, uint tv, uint mv, uint mm, uint sf) {
 
-    if (debug) {
-        printf("GTE :: NCLIP\n");
-    }
-
-    /*
-    SXY_FIFO[0].x = (short)0xFFB9;
-    SXY_FIFO[0].y = (short)0x0029;
-    SXY_FIFO[1].x = (short)0xFFB9;
-    SXY_FIFO[1].y = (short)0x0021;
-    SXY_FIFO[2].x = (short)0xFFB9;
-    SXY_FIFO[2].y = (short)0x00A1;
-    */
+    Log::Debug(
+        "PC: %08X  % 6d    GTE :: NCLIP\n",
+        MipsEmulator::pc + RAM_BASE_OFFSET,
+        MipsEmulator::num_executed
+    );
 
     int64 A = SXY_FIFO[0].x * (SXY_FIFO[1].y - SXY_FIFO[2].y);
     int64 B = SXY_FIFO[1].x * (SXY_FIFO[2].y - SXY_FIFO[0].y);
@@ -841,12 +1068,16 @@ void GteEmulator::gte_NCLIP(uint lm, uint tv, uint mv, uint mm, uint sf) {
     MAC[0] = (int)(CheckCalcBounds(A + B + C, 4));
 }
 
-// Outer Product of 2 Vectors
+/**
+ * Outer Product of 2 Vectors
+ */
 void GteEmulator::gte_OP(uint lm, uint tv, uint mv, uint mm, uint sf) {
 
-    if (debug) {
-        printf("GTE :: OP\n");
-    }
+    Log::Debug(
+        "PC: %08X  % 6d    GTE :: OP\n",
+        MipsEmulator::pc + RAM_BASE_OFFSET,
+        MipsEmulator::num_executed
+    );
 
     MAC[1] = (int)(CheckCalcBounds((ROT_MTX[1][1] * IR[3]) - (ROT_MTX[2][2] * IR[2]), 1) >> sf);
     MAC[2] = (int)(CheckCalcBounds((ROT_MTX[2][2] * IR[1]) - (ROT_MTX[0][0] * IR[3]), 1) >> sf);
@@ -857,12 +1088,16 @@ void GteEmulator::gte_OP(uint lm, uint tv, uint mv, uint mm, uint sf) {
     IR[3] = limA3S(MAC[3]);
 }
 
-// Depth Cue (Single)
+/**
+ * Depth Cue (Single)
+ */
 void GteEmulator::gte_DPCS(uint lm, uint tv, uint mv, uint mm, uint sf) {
 
-    if (debug) {
-        printf("GTE :: DPCS\n");
-    }
+    Log::Debug(
+        "PC: %08X  % 6d    GTE :: DPCS\n",
+        MipsEmulator::pc + RAM_BASE_OFFSET,
+        MipsEmulator::num_executed
+    );
 
     int R = (int)(CheckCalcBounds((int64)(FAR_COLOR_VEC.r << 12) - (RGBC.r << 12), 1) >> sf);
     int G = (int)(CheckCalcBounds((int64)(FAR_COLOR_VEC.g << 12) - (RGBC.g << 12), 2) >> sf);
@@ -884,12 +1119,16 @@ void GteEmulator::gte_DPCS(uint lm, uint tv, uint mv, uint mm, uint sf) {
     RGBC_FIFO[2].cd = RGBC.cd;
 }
 
-// Interpolate (vector & far color vector)
+/**
+ * Interpolate (vector & far color vector)
+ */
 void GteEmulator::gte_INTPL(uint lm, uint tv, uint mv, uint mm, uint sf) {
 
-    if (debug) {
-        printf("GTE :: INTPL\n");
-    }
+    Log::Debug(
+        "PC: %08X  % 6d    GTE :: INTPL\n",
+        MipsEmulator::pc + RAM_BASE_OFFSET,
+        MipsEmulator::num_executed
+    );
 
     int R = (int)((((int64)(FAR_COLOR_VEC.r) << 12) - ((int)IR[1] << 12)) >> sf);
     int G = (int)((((int64)(FAR_COLOR_VEC.g) << 12) - ((int)IR[2] << 12)) >> sf);
@@ -911,12 +1150,16 @@ void GteEmulator::gte_INTPL(uint lm, uint tv, uint mv, uint mm, uint sf) {
     RGBC_FIFO[2].cd = RGBC.cd;
 }
 
-// Multiply Vector by Matrix Vector and Add
+/**
+ * Multiply Vector by Matrix Vector and Add
+ */
 void GteEmulator::gte_MVMVA(uint lm, uint tv, uint mv, uint mm, uint sf) {
 
-    if (debug) {
-        printf("GTE :: MVMA\n");
-    }
+    Log::Debug(
+        "PC: %08X  % 6d    GTE :: MVMA\n",
+        MipsEmulator::pc + RAM_BASE_OFFSET,
+        MipsEmulator::num_executed
+    );
 
     // IR vector for [mv == 3]
     short ir_vec[3] = {IR[1], IR[2], IR[3]};
@@ -955,12 +1198,16 @@ void GteEmulator::gte_MVMVA(uint lm, uint tv, uint mv, uint mm, uint sf) {
     MxV(add, matrix, vector, lm, sf, fc);
 }
 
-// Normal Color Depth Cue (Single)
+/**
+ * Normal Color Depth Cue (Single)
+ */
 void GteEmulator::gte_NCDS(uint lm, uint tv, uint mv, uint mm, uint sf) {
 
-    if (debug) {
-        printf("GTE :: NCDS\n");
-    }
+    Log::Debug(
+        "PC: %08X  % 6d    GTE :: NCDS\n",
+        MipsEmulator::pc + RAM_BASE_OFFSET,
+        MipsEmulator::num_executed
+    );
 
     gte_vec3i zero = {0, 0, 0};
     MxV(zero, LIGHT_MTX, VX[0], lm, sf);
@@ -988,12 +1235,16 @@ void GteEmulator::gte_NCDS(uint lm, uint tv, uint mv, uint mm, uint sf) {
     RGBC_FIFO[2].cd = RGBC.cd;
 }
 
-// Color Depth Cue
+/**
+ * Color Depth Cue
+ */
 void GteEmulator::gte_CDP(uint lm, uint tv, uint mv, uint mm, uint sf) {
 
-    if (debug) {
-        printf("GTE :: CDP\n");
-    }
+    Log::Debug(
+        "PC: %08X  % 6d    GTE :: CDP\n",
+        MipsEmulator::pc + RAM_BASE_OFFSET,
+        MipsEmulator::num_executed
+    );
 
     short products[3] = {IR[1], IR[2], IR[3]};
     MxV(BG_COLOR_VEC, LIGHT_COLOR_MTX, products, lm, sf);
@@ -1018,12 +1269,16 @@ void GteEmulator::gte_CDP(uint lm, uint tv, uint mv, uint mm, uint sf) {
     RGBC_FIFO[2].cd = RGBC.cd;
 }
 
-// Normal Color Depth Cue (Triple)
+/**
+ * Normal Color Depth Cue (Triple)
+ */
 void GteEmulator::gte_NCDT(uint lm, uint tv, uint mv, uint mm, uint sf) {
 
-    if (debug) {
-        printf("GTE :: NCDT\n");
-    }
+    Log::Debug(
+        "PC: %08X  % 6d    GTE :: NCDT\n",
+        MipsEmulator::pc + RAM_BASE_OFFSET,
+        MipsEmulator::num_executed
+    );
 
     for (int i = 0; i < 3; i++) {
 
@@ -1054,12 +1309,16 @@ void GteEmulator::gte_NCDT(uint lm, uint tv, uint mv, uint mm, uint sf) {
     }
 }
 
-// Normal Color Color (Single)
+/**
+ * Normal Color Color (Single)
+ */
 void GteEmulator::gte_NCCS(uint lm, uint tv, uint mv, uint mm, uint sf) {
 
-    if (debug) {
-        printf("GTE :: NCCS\n");
-    }
+    Log::Debug(
+        "PC: %08X  % 6d    GTE :: NCCS\n",
+        MipsEmulator::pc + RAM_BASE_OFFSET,
+        MipsEmulator::num_executed
+    );
 
     gte_vec3i zero = {0, 0, 0};
     MxV(zero, LIGHT_MTX, VX[0], lm, sf);
@@ -1084,12 +1343,16 @@ void GteEmulator::gte_NCCS(uint lm, uint tv, uint mv, uint mm, uint sf) {
 
 }
 
-// Color Color
+/**
+ * Color Color
+ */
 void GteEmulator::gte_CC(uint lm, uint tv, uint mv, uint mm, uint sf) {
 
-    if (debug) {
-        printf("GTE :: CC\n");
-    }
+    Log::Debug(
+        "PC: %08X  % 6d    GTE :: CC\n",
+        MipsEmulator::pc + RAM_BASE_OFFSET,
+        MipsEmulator::num_executed
+    );
 
     short products[3] = {IR[1], IR[2], IR[3]};
     MxV(BG_COLOR_VEC, LIGHT_COLOR_MTX, products, lm, sf);
@@ -1110,12 +1373,16 @@ void GteEmulator::gte_CC(uint lm, uint tv, uint mv, uint mm, uint sf) {
     RGBC_FIFO[2].cd = RGBC.cd;
 }
 
-// Normal Color (Single)
+/**
+ * Normal Color (Single)
+ */
 void GteEmulator::gte_NCS(uint lm, uint tv, uint mv, uint mm, uint sf) {
 
-    if (debug) {
-        printf("GTE :: NCS\n");
-    }
+    Log::Debug(
+        "PC: %08X  % 6d    GTE :: NCS\n",
+        MipsEmulator::pc + RAM_BASE_OFFSET,
+        MipsEmulator::num_executed
+    );
 
     gte_vec3i zero = {0, 0, 0};
     MxV(zero, LIGHT_MTX, VX[0], lm, sf);
@@ -1131,12 +1398,16 @@ void GteEmulator::gte_NCS(uint lm, uint tv, uint mv, uint mm, uint sf) {
     RGBC_FIFO[2].cd = RGBC.cd;
 }
 
-// Normal Color (Triple)
+/**
+ * Normal Color (Triple)
+ */
 void GteEmulator::gte_NCT(uint lm, uint tv, uint mv, uint mm, uint sf) {
 
-    if (debug) {
-        printf("GTE :: NCT\n");
-    }
+    Log::Debug(
+        "PC: %08X  % 6d    GTE :: NCT\n",
+        MipsEmulator::pc + RAM_BASE_OFFSET,
+        MipsEmulator::num_executed
+    );
 
     for (int i = 0; i < 3; i++) {
 
@@ -1156,12 +1427,16 @@ void GteEmulator::gte_NCT(uint lm, uint tv, uint mv, uint mm, uint sf) {
 
 }
 
-// Square of IR Vectors
+/**
+ * Square of IR Vectors
+ */
 void GteEmulator::gte_SQR(uint lm, uint tv, uint mv, uint mm, uint sf) {
 
-    if (debug) {
-        printf("GTE :: SQR\n");
-    }
+    Log::Debug(
+        "PC: %08X  % 6d    GTE :: SQR\n",
+        MipsEmulator::pc + RAM_BASE_OFFSET,
+        MipsEmulator::num_executed
+    );
 
     MAC[1] = (IR[1] * IR[1]) >> sf;
     MAC[2] = (IR[2] * IR[2]) >> sf;
@@ -1172,12 +1447,16 @@ void GteEmulator::gte_SQR(uint lm, uint tv, uint mv, uint mm, uint sf) {
     IR[3] = limA3U(MAC[3]);
 }
 
-// Depth Cue Color Light
+/**
+ * Depth Cue Color Light
+ */
 void GteEmulator::gte_DCPL(uint lm, uint tv, uint mv, uint mm, uint sf) {
 
-    if (debug) {
-        printf("GTE :: DCPL\n");
-    }
+    Log::Debug(
+        "PC: %08X  % 6d    GTE :: DCPL\n",
+        MipsEmulator::pc + RAM_BASE_OFFSET,
+        MipsEmulator::num_executed
+    );
 
     int R = (int)(CheckCalcBounds((int64)(FAR_COLOR_VEC.r << 12) - ((RGBC.r << 4) * IR[1]), 1) >> sf);
     int G = (int)(CheckCalcBounds((int64)(FAR_COLOR_VEC.g << 12) - ((RGBC.g << 4) * IR[2]), 2) >> sf);
@@ -1199,12 +1478,16 @@ void GteEmulator::gte_DCPL(uint lm, uint tv, uint mv, uint mm, uint sf) {
     RGBC_FIFO[2].cd = RGBC.cd;
 }
 
-// Depth Cue (Triple)
+/**
+ * Depth Cue (Triple)
+ */
 void GteEmulator::gte_DPCT(uint lm, uint tv, uint mv, uint mm, uint sf) {
 
-    if (debug) {
-        printf("GTE :: DPCT\n");
-    }
+    Log::Debug(
+        "PC: %08X  % 6d    GTE :: DPCT\n",
+        MipsEmulator::pc + RAM_BASE_OFFSET,
+        MipsEmulator::num_executed
+    );
 
     for (int i = 0; i < 3; i++) {
 
@@ -1229,12 +1512,16 @@ void GteEmulator::gte_DPCT(uint lm, uint tv, uint mv, uint mm, uint sf) {
     }
 }
 
-// Average of 3 SZ Values
+/**
+ * Average of 3 SZ Values
+ */
 void GteEmulator::gte_AVSZ3(uint lm, uint tv, uint mv, uint mm, uint sf) {
 
-    if (debug) {
-        printf("GTE :: AVSZ3\n");
-    }
+    Log::Debug(
+        "PC: %08X  % 6d    GTE :: AVSZ3\n",
+        MipsEmulator::pc + RAM_BASE_OFFSET,
+        MipsEmulator::num_executed
+    );
 
     MAC[0] = (int)(CheckCalcBounds((int64)ZSF3 * (SZ_FIFO[1] + SZ_FIFO[2] + SZ_FIFO[3]), 4));
     OTZ = limC(MAC[0] >> 12);
@@ -1242,20 +1529,26 @@ void GteEmulator::gte_AVSZ3(uint lm, uint tv, uint mv, uint mm, uint sf) {
 
 void GteEmulator::gte_AVSZ4(uint lm, uint tv, uint mv, uint mm, uint sf) {
 
-    if (debug) {
-        printf("GTE :: AVSZ4\n");
-    }
+    Log::Debug(
+        "PC: %08X  % 6d    GTE :: AVSZ4\n",
+        MipsEmulator::pc + RAM_BASE_OFFSET,
+        MipsEmulator::num_executed
+    );
 
     MAC[0] = (int)(CheckCalcBounds((int64)ZSF4 * (SZ_FIFO[0] + SZ_FIFO[1] + SZ_FIFO[2] + SZ_FIFO[3]), 4));
     OTZ = limC(MAC[0] >> 12);
 }
 
-// Rotate, Translate, Perspective (Triple)
+/**
+ * Rotate, Translate, Perspective (Triple)
+ */
 void GteEmulator::gte_RTPT(uint lm, uint tv, uint mv, uint mm, uint sf) {
 
-    if (debug) {
-        printf("GTE :: RTPT\n");
-    }
+    Log::Debug(
+        "PC: %08X  % 6d    GTE :: RTPT\n",
+        MipsEmulator::pc + RAM_BASE_OFFSET,
+        MipsEmulator::num_executed
+    );
 
     for (int i = 0; i < 3; i++) {
 
@@ -1284,12 +1577,16 @@ void GteEmulator::gte_RTPT(uint lm, uint tv, uint mv, uint mm, uint sf) {
     }
 }
 
-// General Purpose Interpolation
+/**
+ * General Purpose Interpolation
+ */
 void GteEmulator::gte_GPF(uint lm, uint tv, uint mv, uint mm, uint sf) {
 
-    if (debug) {
-        printf("GTE :: GPF\n");
-    }
+    Log::Debug(
+        "PC: %08X  % 6d    GTE :: GPF\n",
+        MipsEmulator::pc + RAM_BASE_OFFSET,
+        MipsEmulator::num_executed
+    );
 
     MAC[1] = (int)(CheckCalcBounds(IR[0] * IR[1], 1) >> sf);
     MAC[2] = (int)(CheckCalcBounds(IR[0] * IR[2], 2) >> sf);
@@ -1307,12 +1604,16 @@ void GteEmulator::gte_GPF(uint lm, uint tv, uint mv, uint mm, uint sf) {
     RGBC_FIFO[2].cd = RGBC.cd;
 }
 
-// General Purpose Interpolation (with Base)
+/**
+ * General Purpose Interpolation (with Base)
+ */
 void GteEmulator::gte_GPL(uint lm, uint tv, uint mv, uint mm, uint sf) {
 
-    if (debug) {
-        printf("GTE :: GPL\n");
-    }
+    Log::Debug(
+        "PC: %08X  % 6d    GTE :: GPL\n",
+        MipsEmulator::pc + RAM_BASE_OFFSET,
+        MipsEmulator::num_executed
+    );
 
     MAC[1] = (int)(CheckCalcBounds((int64)(MAC[1] << sf) + (IR[0] * IR[1]), 1) >> sf);
     MAC[2] = (int)(CheckCalcBounds((int64)(MAC[2] << sf) + (IR[0] * IR[2]), 2) >> sf);
@@ -1330,12 +1631,16 @@ void GteEmulator::gte_GPL(uint lm, uint tv, uint mv, uint mm, uint sf) {
     RGBC_FIFO[2].cd = RGBC.cd;
 }
 
-// Normal Color Color (Triple)
+/**
+ * Normal Color Color (Triple)
+ */
 void GteEmulator::gte_NCCT(uint lm, uint tv, uint mv, uint mm, uint sf) {
 
-    if (debug) {
-        printf("GTE :: NCCT\n");
-    }
+    Log::Debug(
+        "PC: %08X  % 6d    GTE :: NCCT\n",
+        MipsEmulator::pc + RAM_BASE_OFFSET,
+        MipsEmulator::num_executed
+    );
 
     for (int i = 0; i < 3; i++) {
 

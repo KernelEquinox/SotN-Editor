@@ -109,10 +109,10 @@ class MipsEmulator {
         static void SetSotNBinary(const char* filename);
         static void LoadMapFile(const char* filename);
         static void StoreMapCLUT(uint offset, uint count, byte* data);
-        static void Initialize(void);
-        static void Reset(void);
-        static void ClearRegisters(void);
-        static void Cleanup(void);
+        static void Initialize();
+        static void Reset();
+        //static void ClearRegisters();
+        static void Cleanup();
         static void ProcessOpcode(uint opcode);
         static void ProcessFunction(uint func_addr);
         static void LoadFile(const char* filename, uint addr);
@@ -121,7 +121,7 @@ class MipsEmulator {
         static void CopyToRAM(uint addr, const void* src, uint count);
         static void CopyFromRAM(uint addr, void* dst, uint count);
         static std::vector<Entity> FindNewEntities(int exclude_addr);
-        static std::vector<Entity> ProcessEntities(void);
+        static std::vector<Entity> ProcessEntities();
 
         // Used for framebuffer operations
         static void LoadImage(RECT* rect, byte* src);

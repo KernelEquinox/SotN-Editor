@@ -1,7 +1,3 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdbool.h>
-#include <memory.h>
 #include "compression.h"
 
 
@@ -49,11 +45,11 @@ void Compression::AppendToDecompressedBuffer(byte new_char) {
 
 
 // Thank you based Ghidra
-int Compression::Decompress(byte* dst, byte* src) {
+uint Compression::Decompress(byte* dst, byte* src) {
     byte bVar1;
     byte cVar2;
     uint uVar3;
-    int iVar4;
+    uint iVar4;
     uint *puVar5;
     int iVar6;
     uint uVar7;
@@ -68,7 +64,7 @@ int Compression::Decompress(byte* dst, byte* src) {
         *puVar5 = (uint)bVar1;
         puVar5++;
     } while (iVar4 < 8);
-    read_high = 0;
+    read_high = false;
     write_high = false;
     offset = src;
     decompress_buffer = dst;

@@ -9,14 +9,8 @@ typedef unsigned short      ushort;
 typedef unsigned char       byte;
 
 // Mostly used for GTE
-typedef uint64_t uint64;
 typedef int64_t int64;
-typedef uint32_t uint32;
-typedef int32_t int32;
-typedef uint16_t uint16;
-typedef int16_t int16;
 typedef uint8_t uint8;
-typedef int8_t int8;
 
 // DRA.BIN address offsets
 const uint WEAPON_NAMES_DESC_ADDR = 0x000A4B04;
@@ -26,6 +20,9 @@ const uint ITEM_NAMES_DESC_ADDR = 0x000DD18C;
 const uint SPELLS_DATA_ADDR = 0x000DFF50;
 const uint ENEMY_NAMES_ADDR = 0x000E05D8;
 const uint ENEMY_DATA_ADDR = 0x000A8900;
+
+// Alucard entity address
+const uint ALUCARD_ENTITY_ADDR = 0x000733D8;
 
 // Graphical data addresses
 const uint GENERIC_SPRITE_BANKS_ADDR = 0x000A3B70;
@@ -71,6 +68,7 @@ const uint PSX_BIN_OFFSET = 0x80010000 - 0x800;
 const uint SOTN_BIN_OFFSET = 0x800A0000;
 const uint MAP_BIN_OFFSET = 0x80180000;
 const uint RAM_BASE_OFFSET = 0x80000000;
+const uint RAM_MAX_OFFSET = 0x80200000;
 
 
 // Polygon array offset
@@ -79,6 +77,20 @@ const uint POLYGT4_LIST_ADDR = 0x00086FEC;
 
 // Ordering table offset
 const uint OT_OFFSET = 0x00054770;
+
+// Room data
+const uint ROOM_TILE_INDICES_ADDR = 0x00073084;
+const uint ROOM_TILE_DATA_ADDR = 0x00073088;
+
+// Addresses holding the current room's dimensions
+const uint ROOM_WIDTH_ADDR = 0x000730A4;
+const uint ROOM_HEIGHT_ADDR = 0x000730A8;
+
+// Addresses holding the current room's coordinates
+const uint ROOM_X_COORD_START_ADDR = 0x000730B0;
+const uint ROOM_Y_COORD_START_ADDR = 0x000730B4;
+const uint ROOM_X_COORD_END_ADDR = 0x000730B8;
+const uint ROOM_Y_COORD_END_ADDR = 0x000730BC;
 
 // Index of tile data in the OT
 const uint OT_FG_TILE_LAYER = 0x60;

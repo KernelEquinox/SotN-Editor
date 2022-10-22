@@ -28,14 +28,14 @@ typedef struct gte_vec3i {
     union { int x, r; };
     union { int y, g; };
     union { int z, b; };
-};
+} gte_vec3i;
 
 // General use 3-short vector
 typedef struct gte_vec3s {
     union { short x, r; };
     union { short y, g; };
     union { short z, b; };
-};
+} gte_vec3s;
 
 // General use 4-byte vector
 typedef struct gte_vec4b {
@@ -43,7 +43,7 @@ typedef struct gte_vec4b {
     union { byte y, g; };
     union { byte z, b; };
     union { byte w, cd; };
-};
+} gte_vec4b;
 
 // Divisor table for GTE division
 static const byte DIV_TABLE[] = {
@@ -72,9 +72,6 @@ class GteEmulator {
 
         // Whether to print debug information or not
         static bool debug;
-
-        // 64 GTE registers
-        static uint registers[64];
 
 
         // Data registers
@@ -111,12 +108,12 @@ class GteEmulator {
 
 
         // GTE emulator functions
-        static void Initialize(void);
+        static void Initialize();
         static void ProcessOpcode(uint opcode);
         static uint ReadDataRegister(uint num);
-        static void WriteDataRegister(uint num, uint val);
+        static void WriteDataRegister(uint num, uint value);
         static uint ReadControlRegister(uint num);
-        static void WriteControlRegister(uint num, uint val);
+        static void WriteControlRegister(uint num, uint value);
 
         // GTE helper functions
         static uint CountLeadingZeros(uint value, uint num_bits);

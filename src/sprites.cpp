@@ -4,15 +4,27 @@
 
 
 
-std::vector<std::vector<Sprite> > Sprite::ReadSpriteBanks(const byte* buf, const uint offset, const uint base) {
+/**
+ * Reads sprite data from a given buffer.
+ *
+ * @param buf: Buffer to read sprite data from
+ * @param offset: Offset of sprite bank within the buffer
+ * @param base: Base address of the buffer
+ *
+ * @return A vector of sprite banks
+ *
+ * @note Sprite banks themselves are vectors of sprites.
+ *
+ */
+std::vector<std::vector<Sprite>> Sprite::ReadSpriteBanks(const byte* buf, const uint offset, const uint base) {
 
     // Create a new
-    std::vector<std::vector<Sprite> > sprite_banks;
+    std::vector<std::vector<Sprite>> sprite_banks;
 
     // Start at bank 1
     uint bank_num = 0;
     uint bank_addr = *(uint*)(buf + offset + (bank_num * 4));
-    while ((bank_addr >= 0x80000000 && bank_addr < 0x80200000) || bank_addr == 0) {
+    while ((bank_addr >= RAM_BASE_OFFSET && bank_addr < RAM_MAX_OFFSET) || bank_addr == 0) {
 
         // Initialize a new set of sprites
         std::vector<Sprite> sprites;
@@ -30,7 +42,7 @@ std::vector<std::vector<Sprite> > Sprite::ReadSpriteBanks(const byte* buf, const
         // Loop through each sprite in the bank
         uint sprite_num = 0;
         uint sprite_addr = *(uint*)(buf + bank_addr + (sprite_num * 4));
-        while ((sprite_addr >= 0x80000000 && sprite_addr < 0x80200000) || sprite_addr == 0) {
+        while ((sprite_addr >= RAM_BASE_OFFSET && sprite_addr < RAM_MAX_OFFSET) || sprite_addr == 0) {
 
             // Initialize a new sprite
             Sprite sprite;

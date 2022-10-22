@@ -1,4 +1,3 @@
-#include <stdbool.h>
 #include "common.h"
 
 
@@ -8,7 +7,7 @@ class Compression {
 	
     public:
 
-    	static int Decompress(byte* dst, byte* src);
+    	static uint Decompress(byte* dst, byte* src);
 
 
 
@@ -19,6 +18,6 @@ class Compression {
 		static byte* decompress_buffer;
 		static byte* offset;
 
-		static byte ReadFromCompressedBuffer(void);
-		static void AppendToDecompressedBuffer(byte newchar);
+		static byte ReadFromCompressedBuffer();
+		static void AppendToDecompressedBuffer(byte new_char);
 };

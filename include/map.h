@@ -83,12 +83,15 @@ class Map {
         // Entity functions
         std::vector<uint> entity_functions;
 
+        // Map of tile data objects to prevent unnecessary allocations
+        std::map<uint, TileData> tile_data_pointers;
+
 
 
         void LoadMapFile(const char* filename);
         void LoadMapGraphics(const char* filename);
-        void LoadMapEntities(void);
-        void Cleanup(void);
+        void LoadMapEntities();
+        void Cleanup();
 
 
     private:

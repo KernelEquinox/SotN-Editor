@@ -19,11 +19,18 @@
 #include "utils.h"
 #include "compression.h"
 #include "mips.h"
+#include "log.h"
 
 
 
 
 
+/**
+ * Loads a map file and updates the calling map object with the processed data.
+ *
+ * @param filename: Filename of the map to load
+ *
+ */
 void Map::LoadMapFile(const char* filename) {
 
     // Set the map ID name
@@ -138,7 +145,7 @@ void Map::LoadMapFile(const char* filename) {
             rooms.push_back(room);
         }
 
-        printf("Rooms Loaded! Total rooms: %lu\n", rooms.size());
+        Log::Info("Rooms Loaded! Total rooms: %lu\n", rooms.size());
     }
 
 
@@ -152,7 +159,7 @@ void Map::LoadMapFile(const char* filename) {
         // Read the sprite banks
         sprite_banks = Sprite::ReadSpriteBanks(map_data, sprite_banks_addr, MAP_BIN_OFFSET);
 
-        printf("Sprites loaded! Total banks: %d\n", sprite_banks.size());
+        Log::Info("Sprites loaded! Total banks: %d\n", sprite_banks.size());
     }
 
 
@@ -198,7 +205,7 @@ void Map::LoadMapFile(const char* filename) {
             i += 12;
         }
 
-        printf("CLUTs loaded! Total CLUTs: %d\n", entity_cluts.size());
+        Log::Info("CLUTs loaded! Total CLUTs: %d\n", entity_cluts.size());
     }
 
 
@@ -247,7 +254,7 @@ void Map::LoadMapFile(const char* filename) {
             entity_layouts.push_back(entity_init_list);
         }
 
-        printf("Entity layouts loaded! Total layouts: %d\n", entity_layouts.size());
+        Log::Info("Entity layouts loaded! Total layouts: %d\n", entity_layouts.size());
     }
 
 
@@ -258,13 +265,10 @@ void Map::LoadMapFile(const char* filename) {
     // Check if tile layers exist
     if (tile_layers_addr > 0) {
 
-        // Map of tile data objects to prevent unnecessary allocations
-        std::map<uint, TileData> tile_data_pointers;
-
         // Loop through layers until no more exist
         uint i = 0;
         uint layer_pair_addr = *(uint*)(map_data + tile_layers_addr + (i * 8));
-        while (layer_pair_addr > 0x80180000 && layer_pair_addr < 0x80200000) {
+        while (layer_pair_addr > 0x80180000 && layer_pair_addr < RAM_MAX_OFFSET) {
 
             // Create a new tile layer pair
             std::pair<TileLayer, TileLayer> tile_pair;
@@ -287,12 +291,15 @@ void Map::LoadMapFile(const char* filename) {
                 uint layer_addr = *(uint*)(map_data + tile_layers_addr + (i * 8) + (k * 4)) - MAP_BIN_OFFSET;
 
                 // Get the address of the tile indices
-                uint tile_indices_addr = *(uint*)(map_data + layer_addr) - MAP_BIN_OFFSET;
+                cur_layer->tile_indices_addr = *(uint*)(map_data + layer_addr);
 
                 // Skip null pointers
-                if (tile_indices_addr + MAP_BIN_OFFSET == 0) {
+                if (cur_layer->tile_indices_addr == 0) {
                     continue;
                 }
+
+                // Adjust tile index address
+                cur_layer->tile_indices_addr -= MAP_BIN_OFFSET;
 
                 // Get the layer dimensions (3-byte value, ignores highest byte)
                 uint dimension_data = *(uint*)(map_data + layer_addr + 8);
@@ -315,22 +322,22 @@ void Map::LoadMapFile(const char* filename) {
 
                 // Read the tile indices into a newly-allocated buffer
                 cur_layer->tile_indices = (ushort*)calloc(num_tiles, sizeof(ushort));
-                memcpy(cur_layer->tile_indices, map_data + tile_indices_addr, num_tiles * sizeof(ushort));
+                memcpy(cur_layer->tile_indices, map_data + cur_layer->tile_indices_addr, num_tiles * sizeof(ushort));
 
                 // Get the address of the tile data
-                uint tile_data_addr = *(uint*)(map_data + layer_addr + 4) - MAP_BIN_OFFSET;
+                cur_layer->tile_data_addr = *(uint*)(map_data + layer_addr + 4) - MAP_BIN_OFFSET;
 
                 // Check if the tile data pointer is not currently in the map
-                if (tile_data_pointers.count(tile_data_addr) == 0) {
+                if (tile_data_pointers.count(cur_layer->tile_data_addr) == 0) {
 
                     // Create a new tile data object
                     TileData tile_data;
 
                     // Get the addresses of all tile data elements
-                    uint tile_ids_addr = *(uint*)(map_data + tile_data_addr) - MAP_BIN_OFFSET;
-                    uint tile_positions_addr = *(uint*)(map_data + tile_data_addr + 4) - MAP_BIN_OFFSET;
-                    uint tile_cluts_addr = *(uint*)(map_data + tile_data_addr + 8) - MAP_BIN_OFFSET;
-                    uint tile_collision_addr = *(uint*)(map_data + tile_data_addr + 12) - MAP_BIN_OFFSET;
+                    uint tile_ids_addr = *(uint*)(map_data + cur_layer->tile_data_addr) - MAP_BIN_OFFSET;
+                    uint tile_positions_addr = *(uint*)(map_data + cur_layer->tile_data_addr + 4) - MAP_BIN_OFFSET;
+                    uint tile_cluts_addr = *(uint*)(map_data + cur_layer->tile_data_addr + 8) - MAP_BIN_OFFSET;
+                    uint tile_collision_addr = *(uint*)(map_data + cur_layer->tile_data_addr + 12) - MAP_BIN_OFFSET;
 
                     // Allocate memory for all elements
                     tile_data.tileset_ids = (byte*)calloc(4096, sizeof(byte));
@@ -345,15 +352,12 @@ void Map::LoadMapFile(const char* filename) {
                     memcpy(tile_data.collision_ids, map_data + tile_collision_addr, 4096);
 
                     // Add the tile data to the tile data map using the address of the data as the key
-                    tile_data_pointers[tile_data_addr] = tile_data;
+                    tile_data_pointers[cur_layer->tile_data_addr] = tile_data;
                 }
 
                 // Set the tile data pointer for the layer
-                cur_layer->tile_data = tile_data_pointers.at(tile_data_addr);
+                cur_layer->tile_data = tile_data_pointers.at(cur_layer->tile_data_addr);
             }
-
-            // Print the tile layer data
-            printf("Layer %d Z indices: %d, %d\n", i, tile_pair.first.z_index, tile_pair.second.z_index);
 
             // Move to the next layer pair
             i++;
@@ -363,7 +367,7 @@ void Map::LoadMapFile(const char* filename) {
             tile_layers.push_back(tile_pair);
         }
 
-        printf("Tile layers loaded! Total layers: %d\n", tile_layers.size());
+        Log::Info("Tile layers loaded! Total layers: %d\n", tile_layers.size());
     }
 
 
@@ -379,17 +383,20 @@ void Map::LoadMapFile(const char* filename) {
         while (entity_graphics_addr + (i * 4) != entity_layouts_addr) {
 
             // Get the address for the next list of entity graphics entries
-            uint graphics_list_addr = *(uint*)(map_data + entity_graphics_addr + (i * 4)) - MAP_BIN_OFFSET;
+            uint graphics_list_addr = *(uint*)(map_data + entity_graphics_addr + (i * 4));
 
             // Initialize a new list of entity init data
             std::vector<EntityGraphicsData> entity_graphics_data_list;
 
             // Skip any null entries
-            if (graphics_list_addr + MAP_BIN_OFFSET == 0) {
+            if (graphics_list_addr == 0) {
                 entity_graphics.push_back(entity_graphics_data_list);
                 i++;
                 continue;
             }
+
+            // Adjust graphics list address
+            graphics_list_addr -= MAP_BIN_OFFSET;
 
             // Get the first identifier
             int marker = *(int*)(map_data + graphics_list_addr);
@@ -412,7 +419,7 @@ void Map::LoadMapFile(const char* filename) {
                     graphics_data.vram_x = *(ushort*)(map_data + graphics_list_addr + (k * sizeof(EntityGraphicsData)) + 2);
                     graphics_data.height = *(ushort*)(map_data + graphics_list_addr + (k * sizeof(EntityGraphicsData)) + 4);
                     graphics_data.width = *(ushort*)(map_data + graphics_list_addr + (k * sizeof(EntityGraphicsData)) + 6);
-                    graphics_data.compressed_graphics_addr = *(uint*)(map_data + graphics_list_addr + (k * sizeof(EntityGraphicsData)) + 8) - MAP_BIN_OFFSET;
+                    graphics_data.compressed_graphics_addr = *(uint*)(map_data + graphics_list_addr + (k * sizeof(EntityGraphicsData)) + 8);
 
                     // Add the entry to the entity graphics list
                     entity_graphics_data_list.push_back(graphics_data);
@@ -430,7 +437,7 @@ void Map::LoadMapFile(const char* filename) {
             i++;
         }
 
-        printf("Entity graphics loaded! Total entries: %d\n", entity_graphics.size());
+        Log::Info("Entity graphics loaded! Total entries: %d\n", entity_graphics.size());
     }
 
 
@@ -466,9 +473,12 @@ void Map::LoadMapFile(const char* filename) {
             EntityGraphicsData graphics_data = entity_graphics_list[k];
 
             // Skip this entry if no data address was defined
-            if (graphics_data.compressed_graphics_addr + MAP_BIN_OFFSET == 0) {
+            if (graphics_data.compressed_graphics_addr == 0) {
                 continue;
             }
+
+            // Adjust compressed graphics address
+            graphics_data.compressed_graphics_addr -= MAP_BIN_OFFSET;
 
             // Determine the size of the decompressed data (index bytes [1], not pixels [4])
             uint data_size = graphics_data.width * graphics_data.height;
@@ -522,13 +532,13 @@ void Map::LoadMapFile(const char* filename) {
 
         // Loop until a non-pointer is found
         uint i = 1;
-        while (func_addr >= MAP_BIN_OFFSET && func_addr < 0x80200000) {
+        while (func_addr >= MAP_BIN_OFFSET && func_addr < RAM_MAX_OFFSET) {
             entity_functions.push_back(func_addr - MAP_BIN_OFFSET);
             func_addr = *(uint*)(map_data + entity_functions_addr + (i++ * 4));
         }
     }
 
-    printf("Entity functions: %d\n", entity_functions.size());
+    Log::Info("Entity functions: %d\n", entity_functions.size());
 
 
 
@@ -541,6 +551,12 @@ void Map::LoadMapFile(const char* filename) {
 
 
 
+/**
+ * Loads the graphics for a given map file.
+ *
+ * @param filename: Filename of the map to load graphics data from
+ *
+ */
 void Map::LoadMapGraphics(const char* filename) {
 
     // Open the graphics file (F_*.BIN)
@@ -563,7 +579,7 @@ void Map::LoadMapGraphics(const char* filename) {
 
 
     // Convert file data to RGBA pixels
-    byte* pixel_data = Utils::Indexed_to_RGBA(file_data, num_bytes);
+    byte* pixel_data = Utils::Indexed_to_RGBA(file_data, num_bytes / 2);
 
 
 
@@ -705,17 +721,17 @@ void Map::LoadMapGraphics(const char* filename) {
         for (int k = 0; k < 2; k++) {
 
             // Get the current FG or BG tile layer
-            TileLayer cur_layer = (k == 0 ? tile_layers[i].first : tile_layers[i].second);
+            TileLayer* cur_layer = (k == 0 ? &tile_layers[i].first : &tile_layers[i].second);
 
             // Loop through each tile
-            for (int idx = 0; idx < cur_layer.width * cur_layer.height; idx++) {
+            for (int idx = 0; idx < cur_layer->width * cur_layer->height; idx++) {
 
                 // Get the tile
-                ushort tile_idx = cur_layer.tile_indices[idx];
-                byte tileset_id = cur_layer.tile_data.tileset_ids[tile_idx];
-                byte tile_position = cur_layer.tile_data.tile_positions[tile_idx];
-                byte clut_id = cur_layer.tile_data.clut_ids[tile_idx];
-                byte tile_collision = cur_layer.tile_data.collision_ids[tile_idx];
+                ushort tile_idx = cur_layer->tile_indices[idx];
+                byte tileset_id = cur_layer->tile_data.tileset_ids[tile_idx];
+                byte tile_position = cur_layer->tile_data.tile_positions[tile_idx];
+                byte clut_id = cur_layer->tile_data.clut_ids[tile_idx];
+                byte tile_collision = cur_layer->tile_data.collision_ids[tile_idx];
 
                 // Get the tileset to use for the lookup
                 GLuint tileset = map_tilesets[tileset_id];
@@ -725,7 +741,7 @@ void Map::LoadMapGraphics(const char* filename) {
                 uint offset_y = ((tile_position >> 4) & 0xF) * 16;
 
                 // Adjust the offsets as needed for room types 0x20 and 0x40
-                if ((cur_layer.load_flags & 0x20) == 0x20) {
+                if ((cur_layer->load_flags & 0x20) == 0x20) {
                     offset_x %= 128;
                     offset_y -= 16 * (offset_y % 32 != 0);
                 }
@@ -744,14 +760,16 @@ void Map::LoadMapGraphics(const char* filename) {
                 byte* tile_output = (byte*)calloc(tile_width * tile_height * 4, sizeof(byte));
 
                 // Select the appropriate CLUT
-                byte* clut = Utils::Indexed_to_RGBA(map_tile_cluts[clut_id], 32);
-                if ((cur_layer.drawing_flags & 0x200) == 0x200) {
+                uint num_pixels = 0;
+                if ((cur_layer->drawing_flags & 0x200) == 0x200) {
                     uint clut_offset = (clut_id % 256) * 16 * 4;
-                    clut = generic_rgba_cluts + clut_offset;
+                    num_pixels = Utils::VRAM_to_RGBA(pixels, generic_rgba_cluts + clut_offset, tile_width / 4, tile_height, tile_output);
                 }
-
-                // Expand all pixels by their CLUT components
-                uint num_pixels = Utils::VRAM_to_RGBA(pixels, clut, tile_width / 4, tile_height, tile_output);
+                else {
+                    byte* clut = Utils::Indexed_to_RGBA(map_tile_cluts[clut_id], 32);
+                    num_pixels = Utils::VRAM_to_RGBA(pixels, clut, tile_width / 4, tile_height, tile_output);
+                    free(clut);
+                }
 
                 // Create a new tile object for management
                 Tile tile;
@@ -765,12 +783,15 @@ void Map::LoadMapGraphics(const char* filename) {
                 }
 
                 // Add the tile to the layer
+                /*
                 if (k == 0) {
                     tile_layers[i].first.tiles.push_back(tile);
                 }
                 else {
                     tile_layers[i].second.tiles.push_back(tile);
                 }
+                */
+                cur_layer->tiles.push_back(tile);
 
                 // Free the data
                 free(tile_output);
@@ -782,19 +803,21 @@ void Map::LoadMapGraphics(const char* filename) {
     // Set each tile layer for each room
     for (int i = 0; i < rooms.size(); i++) {
 
+        Room* cur_room = &rooms[i];
+
         // Skip transition rooms
-        if (rooms[i].load_flag == 0xFF) {
+        if (cur_room->load_flag == 0xFF) {
             continue;
         }
 
         // Get the current layer ID
-        uint layer_id = rooms[i].tile_layout_id;
-        if (layer_id > tile_layers.size()) {
-            fprintf(stderr, "ERROR: Room %d has tile layer ID %d (only %d layers exist)\n", i, layer_id, tile_layers.size());
+        uint layer_id = cur_room->tile_layout_id;
+        if (layer_id >= tile_layers.size()) {
+            Log::Error("ERROR: Room %d has tile layer ID %d (only %lu layers exist)\n", i, layer_id, tile_layers.size());
             continue;
         }
-        rooms[i].fg_layer = tile_layers[layer_id].first;
-        rooms[i].bg_layer = tile_layers[layer_id].second;
+        cur_room->fg_layer = tile_layers[layer_id].first;
+        cur_room->bg_layer = tile_layers[layer_id].second;
     }
 
 
@@ -803,9 +826,10 @@ void Map::LoadMapGraphics(const char* filename) {
 
         Room* cur_room = &rooms[i];
 
-        byte* blank = (byte*)calloc(cur_room->bg_layer.width * 16 * cur_room->bg_layer.height * 16 * 4, sizeof(byte));
-        cur_room->bg_texture = Utils::CreateTexture(blank, cur_room->bg_layer.width * 16, cur_room->bg_layer.height * 16);
-        cur_room->fg_texture = Utils::CreateTexture(blank, cur_room->fg_layer.width * 16, cur_room->fg_layer.height * 16);
+        byte* bg_blank = (byte*)calloc(cur_room->bg_layer.width * 16 * cur_room->bg_layer.height * 16 * 4, sizeof(byte));
+        byte* fg_blank = (byte*)calloc(cur_room->fg_layer.width * 16 * cur_room->fg_layer.height * 16 * 4, sizeof(byte));
+        cur_room->bg_texture = Utils::CreateTexture(bg_blank, cur_room->bg_layer.width * 16, cur_room->bg_layer.height * 16);
+        cur_room->fg_texture = Utils::CreateTexture(fg_blank, cur_room->fg_layer.width * 16, cur_room->fg_layer.height * 16);
 
         // Check if BG exists
         if (cur_room->bg_layer.tiles.size() > 0) {
@@ -820,20 +844,22 @@ void Map::LoadMapGraphics(const char* filename) {
                     uint idx = (y * cur_room->bg_layer.width) + x;
 
                     GLuint cur_tex = cur_room->bg_layer.tiles[idx].texture;
+                    byte* pixels = Utils::GetPixels(cur_tex, 0, 0, 16, 16);
 
                     glBindTexture(GL_TEXTURE_2D, cur_room->bg_texture);
                     glTexSubImage2D(
-                            GL_TEXTURE_2D,
-                            0,
-                            x * 16,
-                            y * 16,
-                            16,
-                            16,
-                            GL_RGBA,
-                            GL_UNSIGNED_BYTE,
-                            Utils::GetPixels(cur_tex, 0, 0, 16, 16)
+                        GL_TEXTURE_2D,
+                        0,
+                        x * 16,
+                        y * 16,
+                        16,
+                        16,
+                        GL_RGBA,
+                        GL_UNSIGNED_BYTE,
+                        pixels
                     );
                     glBindTexture(GL_TEXTURE_2D, 0);
+                    free(pixels);
 
                 }
             }
@@ -851,25 +877,28 @@ void Map::LoadMapGraphics(const char* filename) {
                     uint idx = (y * cur_room->fg_layer.width) + x;
 
                     GLuint cur_tex = cur_room->fg_layer.tiles[idx].texture;
+                    byte* pixels = Utils::GetPixels(cur_tex, 0, 0, 16, 16);
 
                     glBindTexture(GL_TEXTURE_2D, cur_room->fg_texture);
                     glTexSubImage2D(
-                            GL_TEXTURE_2D,
-                            0,
-                            x * 16,
-                            y * 16,
-                            16,
-                            16,
-                            GL_RGBA,
-                            GL_UNSIGNED_BYTE,
-                            Utils::GetPixels(cur_tex, 0, 0, 16, 16)
+                        GL_TEXTURE_2D,
+                        0,
+                        x * 16,
+                        y * 16,
+                        16,
+                        16,
+                        GL_RGBA,
+                        GL_UNSIGNED_BYTE,
+                        pixels
                     );
                     glBindTexture(GL_TEXTURE_2D, 0);
+                    free(pixels);
 
                 }
             }
         }
-        free(blank);
+        free(bg_blank);
+        free(fg_blank);
     }
 
 
@@ -959,6 +988,9 @@ void Map::LoadMapGraphics(const char* filename) {
 
 
 
+/**
+ * Loads and processes any entities present in the map.
+ */
 void Map::LoadMapEntities() {
 
     // Create a new framebuffer
@@ -1004,7 +1036,7 @@ void Map::LoadMapEntities() {
 
             // Fetch entity function address
             uint entity_func_id = init_data.entity_id & 0x03FF;
-            uint entity_func = entity_functions[entity_func_id] + MAP_BIN_OFFSET - 0x80000000;
+            uint entity_func = entity_functions[entity_func_id] + MAP_BIN_OFFSET - RAM_BASE_OFFSET;
 
             // Determine entity location in RAM
             uint entity_ram_location = ENTITY_ALLOCATION_START + ((init_data.slot & 0xFF) * sizeof(entity_data));
@@ -1013,23 +1045,40 @@ void Map::LoadMapEntities() {
             MipsEmulator::CopyToRAM(entity_ram_location, &entity_data, sizeof(entity_data));
         }
 
+        // Write current room dimensions to RAM
+        MipsEmulator::WriteIntToRAM(ROOM_WIDTH_ADDR, cur_room->width);
+        MipsEmulator::WriteIntToRAM(ROOM_HEIGHT_ADDR, cur_room->width);
+
+        // Write current room coordinates to RAM
+        MipsEmulator::WriteIntToRAM(ROOM_X_COORD_START_ADDR, cur_room->x_start);
+        MipsEmulator::WriteIntToRAM(ROOM_Y_COORD_START_ADDR, cur_room->y_start);
+        MipsEmulator::WriteIntToRAM(ROOM_X_COORD_END_ADDR, cur_room->x_end);
+        MipsEmulator::WriteIntToRAM(ROOM_Y_COORD_END_ADDR, cur_room->y_end);
+
+        // Write tile layout to RAM
+        MipsEmulator::WriteIntToRAM(ROOM_TILE_INDICES_ADDR, cur_room->fg_layer.tile_indices_addr + MAP_RAM_OFFSET);
+        MipsEmulator::WriteIntToRAM(ROOM_TILE_DATA_ADDR, cur_room->fg_layer.tile_data_addr + MAP_RAM_OFFSET);
+
         // Process all of the entities in RAM
         std::vector<Entity> entities = MipsEmulator::ProcessEntities();
 
         // Commit any framebuffer changes
         byte* fb_pixels = Utils::GetPixels(MipsEmulator::framebuffer, 0, 240, 768, 16);
         byte* indexed_pixels = Utils::RGBA_to_Indexed(fb_pixels, 768 * 16);
+        free(fb_pixels);
         for (int k = 0; k < 768 * 16 * 2; k++) {
             byte val = indexed_pixels[k];
             if (val > 0) {
                 *(byte*)(MipsEmulator::ram + CLUT_BASE_ADDR + k) = val;
             }
         }
+        free(indexed_pixels);
 
         // Regenerate entity CLUT textures just in case an entity modified the CLUTs
         byte* entity_rgba_cluts = (byte*)calloc(0x6000 * 4, sizeof(byte));
         Utils::CLUT_to_RGBA(MipsEmulator::ram + CLUT_BASE_ADDR + 0x4000, entity_rgba_cluts, 256, false);
         entity_cluts_texture = Utils::CreateTexture(entity_rgba_cluts, 256, 16);
+        free(entity_rgba_cluts);
 
         // Associate entities with the room
         cur_room->entities = entities;
@@ -1044,7 +1093,7 @@ void Map::LoadMapEntities() {
                 if ((entity->data.unk34 & 0xFFFF) == 0x2000) {
 
                     // Set the current polygon address
-                    uint polygt4_addr = entity->data.unk7C - 0x80000000;
+                    uint polygt4_addr = entity->data.unk7C - RAM_BASE_OFFSET;
 
                     // Loop through all polygons
                     while (true) {
@@ -1141,10 +1190,13 @@ void Map::LoadMapEntities() {
 
                         // Expand all pixels by their CLUT components
                         Utils::VRAM_to_RGBA(pixels, clut, width / 4, height, rgba_pixels);
+                        free(pixels);
+                        free(clut);
 
                         // Create texture from thingo
                         GLuint part_texture = Utils::CreateTexture(rgba_pixels, width, height);
                         entity_subsprite.texture = part_texture;
+                        free(rgba_pixels);
 
                         // Determine any texture flipping
                         entity_subsprite.flip_x = (polygon.x0 > polygon.x1) ^ (polygon.u0 > polygon.u1);
@@ -1184,18 +1236,13 @@ void Map::LoadMapEntities() {
                         // Add the sprite part to the list of entity sprites
                         entity->sprites.push_back(entity_subsprite);
 
-                        // Free allocated data
-                        free(pixels);
-                        free(clut);
-                        free(rgba_pixels);
-
                         // Bail if tag is zero
-                        if (polygon.tag == 0 || polygon.code != cur_code) {
+                        if (polygon.tag == 0) {
                             break;
                         }
 
                         // Otherwise set the tag to the new target address
-                        polygt4_addr = polygon.tag - 0x80000000;
+                        polygt4_addr = polygon.tag - RAM_BASE_OFFSET;
                     }
 
                     // Reverse the textures
@@ -1260,9 +1307,10 @@ void Map::LoadMapEntities() {
 
                     // Expand all pixels by their CLUT components
                     Utils::VRAM_to_RGBA(pixels, rgba_clut, image.width / 4, image.height, rgba_pixels);
+                    free(pixels);
 
                     // Check if pixels have any transparency
-                    for (int z = 0; z < image.width * image.height * 4; z++) {
+                    for (int z = 0; z < image.width * image.height; z++) {
                         byte alpha = *(byte*)(rgba_pixels + (z * 4) + 3);
                         // Flag the sprite as being blendable
                         if (alpha == 0x80) {
@@ -1270,13 +1318,10 @@ void Map::LoadMapEntities() {
                         }
                     }
 
-                    // Free data
-                    free(rgba_pixels);
-                    free(pixels);
-
                     // Create texture from thingo
                     GLuint part_texture = Utils::CreateTexture(rgba_pixels, image.width, image.height);
                     entity_subsprite.texture = part_texture;
+                    free(rgba_pixels);
 
                     // Determine any texture flipping
                     entity_subsprite.flip_y = ((image.flags & 1) == 1);
@@ -1355,9 +1400,10 @@ void Map::LoadMapEntities() {
 
                         // Expand all pixels by their CLUT components
                         Utils::VRAM_to_RGBA(pixels, rgba_clut, image.width / 4, image.height, rgba_pixels);
+                        free(pixels);
 
                         // Check if pixels have any transparency
-                        for (int z = 0; z < image.width * image.height * 4; z++) {
+                        for (int z = 0; z < image.width * image.height; z++) {
                             byte alpha = *(byte*)(rgba_pixels + (z * 4) + 3);
                             // Flag the sprite as being blendable
                             if (alpha == 0x80) {
@@ -1365,13 +1411,10 @@ void Map::LoadMapEntities() {
                             }
                         }
 
-                        // Free data
-                        free(rgba_pixels);
-                        free(pixels);
-
                         // Create texture from thingo
                         GLuint part_texture = Utils::CreateTexture(rgba_pixels, image.width, image.height);
                         entity_subsprite.texture = part_texture;
+                        free(rgba_pixels);
 
                         // Determine any texture flipping
                         entity_subsprite.flip_y = ((image.flags & 1) == 1);
@@ -1458,9 +1501,10 @@ void Map::LoadMapEntities() {
 
                         // Expand all pixels by their CLUT components
                         Utils::VRAM_to_RGBA(pixels, rgba_clut, image.width / 4, image.height, rgba_pixels);
+                        free(pixels);
 
                         // Check if pixels have any transparency
-                        for (int z = 0; z < image.width * image.height * 4; z++) {
+                        for (int z = 0; z < image.width * image.height; z++) {
                             byte alpha = *(byte*)(rgba_pixels + (z * 4) + 3);
                             // Flag the sprite as being blendable
                             if (alpha == 0x80) {
@@ -1468,13 +1512,10 @@ void Map::LoadMapEntities() {
                             }
                         }
 
-                        // Free data
-                        free(rgba_pixels);
-                        free(pixels);
-
                         // Create texture from thingo
                         GLuint part_texture = Utils::CreateTexture(rgba_pixels, image.width, image.height);
                         entity_subsprite.texture = part_texture;
+                        free(rgba_pixels);
 
                         // Determine any texture flipping
                         entity_subsprite.flip_y = ((image.flags & 1) == 1);
@@ -1560,9 +1601,10 @@ void Map::LoadMapEntities() {
 
                     // Expand all pixels by their CLUT components
                     Utils::VRAM_to_RGBA(pixels, rgba_clut, image.width / 4, image.height, rgba_pixels);
+                    free(pixels);
 
                     // Check if pixels have any transparency
-                    for (int z = 0; z < image.width * image.height * 4; z++) {
+                    for (int z = 0; z < image.width * image.height; z++) {
                         byte alpha = *(byte*)(rgba_pixels + (z * 4) + 3);
                         // Flag the sprite as being blendable
                         if (alpha == 0x80) {
@@ -1570,13 +1612,10 @@ void Map::LoadMapEntities() {
                         }
                     }
 
-                    // Free data
-                    free(rgba_pixels);
-                    free(pixels);
-
                     // Create texture from thingo
                     GLuint part_texture = Utils::CreateTexture(rgba_pixels, image.width, image.height);
                     entity_subsprite.texture = part_texture;
+                    free(rgba_pixels);
 
                     // Determine any texture flipping
                     entity_subsprite.flip_y = ((image.flags & 1) == 1);
@@ -1693,6 +1732,8 @@ void Map::LoadMapEntities() {
 
                             // Expand all pixels by their CLUT components
                             Utils::VRAM_to_RGBA(pixels, rgba_clut, image.width / 4, image.height, rgba_pixels);
+                            free(pixels);
+                            free(rgba_clut);
 
                             // Check if pixels have any transparency
                             for (int z = 0; z < image.width * image.height; z++) {
@@ -1706,6 +1747,7 @@ void Map::LoadMapEntities() {
                             // Create texture from thingo
                             GLuint part_texture = Utils::CreateTexture(rgba_pixels, image.width, image.height);
                             entity_subsprite.texture = part_texture;
+                            free(rgba_pixels);
 
                             // Determine any texture flipping
                             entity_subsprite.flip_y = ((image.flags & 1) == 1);
@@ -1724,11 +1766,6 @@ void Map::LoadMapEntities() {
 
                             // Add the sprite part to the list of entity sprites
                             entity->sprites.push_back(entity_subsprite);
-
-                            // Free data
-                            free(rgba_pixels);
-                            free(rgba_clut);
-                            free(pixels);
                         }
 
                         // Reverse the textures
@@ -1736,7 +1773,7 @@ void Map::LoadMapEntities() {
                     }
 
                     // Check if entity tileset exists (e.g. enemies)
-                    else if (entity->data.tileset > 0) {
+                    else {
 
                         // Loop through each sprite part
                         for (int m = 0; m < sprite.parts.size(); m++) {
@@ -1785,9 +1822,12 @@ void Map::LoadMapEntities() {
 
                             // Convert RGB1555 CLUT to RGBA CLUT
                             Utils::CLUT_to_RGBA(clut, rgba_clut, 1, true);
+                            free(clut);
 
                             // Expand all pixels by their CLUT components
                             Utils::VRAM_to_RGBA(pixels, rgba_clut, image.width / 4, image.height, rgba_pixels);
+                            free(pixels);
+                            free(rgba_clut);
 
                             // Check if pixels have any transparency
                             for (int z = 0; z < image.width * image.height; z++) {
@@ -1810,6 +1850,7 @@ void Map::LoadMapEntities() {
                             // Create texture from thingo
                             GLuint part_texture = Utils::CreateTexture(rgba_pixels, image.width, image.height);
                             entity_subsprite.texture = part_texture;
+                            free(rgba_pixels);
 
                             // Determine any texture flipping
                             entity_subsprite.flip_y = ((image.flags & 1) == 1);
@@ -1828,11 +1869,6 @@ void Map::LoadMapEntities() {
 
                             // Add the sprite part to the list of entity sprites
                             entity->sprites.push_back(entity_subsprite);
-
-                            // Free data
-                            free(rgba_pixels);
-                            free(rgba_clut);
-                            free(pixels);
                         }
 
                         // Reverse the textures
@@ -1938,9 +1974,10 @@ void Map::LoadMapEntities() {
 
                         // Expand all pixels by their CLUT components
                         Utils::VRAM_to_RGBA(pixels, rgba_clut, image.width / 4, image.height, rgba_pixels);
+                        free(pixels);
 
                         // Check if pixels have any transparency
-                        for (int z = 0; z < image.width * image.height * 4; z++) {
+                        for (int z = 0; z < image.width * image.height; z++) {
                             byte alpha = *(byte*)(rgba_pixels + (z * 4) + 3);
                             // Flag the sprite as being blendable
                             if (alpha == 0x80) {
@@ -1960,6 +1997,7 @@ void Map::LoadMapEntities() {
                         // Create texture from thingo
                         GLuint part_texture = Utils::CreateTexture(rgba_pixels, image.width, image.height);
                         entity_subsprite.texture = part_texture;
+                        free(rgba_pixels);
 
                         // Determine any texture flipping
                         entity_subsprite.flip_y = ((image.flags & 1) == 1);
@@ -1978,11 +2016,6 @@ void Map::LoadMapEntities() {
 
                         // Add the sprite part to the list of entity sprites
                         entity->sprites.push_back(entity_subsprite);
-
-                        // Free data
-                        free(rgba_pixels);
-                        //free(rgba_clut);
-                        free(pixels);
                     }
 
                     // Reverse the textures
@@ -2025,6 +2058,9 @@ void Map::LoadMapEntities() {
 
 
 
+/**
+ * Cleans up the object and frees allocated memory.
+ */
 void Map::Cleanup() {
 
     // Delete all room layer textures
@@ -2043,6 +2079,27 @@ void Map::Cleanup() {
                 glDeleteTextures(1, &cur_entity->sprites[m].texture);
             }
         }
+
+        // Free all allocated layer memory
+        free(cur_room->fg_layer.tile_indices);
+        free(cur_room->bg_layer.tile_indices);
+    }
+
+    // Free all tile data pointers
+    for (auto const& entry : tile_data_pointers) {
+        free(entry.second.tileset_ids);
+        free(entry.second.tile_positions);
+        free(entry.second.clut_ids);
+        free(entry.second.collision_ids);
+    }
+
+    // Clear out the tile data pointers
+    tile_data_pointers.clear();
+
+    // Free entity CLUT data
+    for (int i = 0; i < entity_cluts.size(); i++) {
+        ClutEntry* clut_entry = &entity_cluts[i];
+        free(clut_entry->clut_data);
     }
 
     // Delete all tile textures from all layers
@@ -2058,20 +2115,6 @@ void Map::Cleanup() {
             glDeleteTextures(1, &tile_layers[i].second.tiles[k].texture);
         }
     }
-
-    /*
-    // Delete all map textures
-    glDeleteTextures((int)map_textures.size(), &map_textures[0]);
-
-    // Delete map VRAM texture
-    glDeleteTextures(1, &map_vram);
-
-    // Delete all map tilesets
-    glDeleteTextures((int)map_tilesets.size(), &map_tilesets[0]);
-
-    // Delete texture for entity CLUTs
-    glDeleteTextures(1, &entity_cluts_texture);
-    */
 
     // Clear map ID
     map_id = "";

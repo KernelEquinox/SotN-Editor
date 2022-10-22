@@ -56,7 +56,7 @@ class Room {
         std::map<uint, std::vector<EntitySpritePart>> fg_ordering_table;
 
 
-		void LoadEntityTilesets(void);
+		void LoadEntityTilesets();
 
 
 	private:

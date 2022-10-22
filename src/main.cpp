@@ -6,10 +6,10 @@
 #include <cstdlib>
 #include <algorithm>
 #include <filesystem>
+#include <functional>
 #if defined(IMGUI_IMPL_OPENGL_ES2)
 #include <GLES2/gl2.h>
 #endif
-#define GLEW_STATIC
 #include <GL/glew.h>
 #include <GLFW/glfw3.h> // Will drag system OpenGL headers
 
@@ -25,6 +25,7 @@
 #include "entities.h"
 #include "map.h"
 #include "utils.h"
+#include "log.h"
 
 
 #if defined(_MSC_VER) && (_MSC_VER >= 1900) && !defined(IMGUI_DISABLE_WIN32_FUNCTIONS)
@@ -33,7 +34,7 @@
 
 static void glfw_error_callback(int error, const char* description)
 {
-    fprintf(stderr, "Glfw Error %d: %s\n", error, description);
+    Log::Error("Glfw Error %d: %s\n", error, description);
 }
 
 
@@ -49,6 +50,20 @@ Map map;
 // Any errors that might appear
 std::string error;
 
+// Popup flags
+enum POPUP_FLAGS {
+    POPUP_NONE       =      0,
+    POPUP_HAS_OK     = 1 << 0,      // Shows an "OK" button to dismiss the popup
+    POPUP_EPHEMERAL  = 1 << 1,      // Used to temporarily display a status while a function is executing
+    POPUP_CLOSE      = 1 << 2       // Flags the popup to automatically close
+};
+
+struct popup {
+    std::string text;
+    POPUP_FLAGS flags = POPUP_NONE;
+    std::function<void()> callback;
+} popup;
+
 // Vertex index
 static int vtx_idx;
 
@@ -59,12 +74,16 @@ GLuint fgame_texture;
 std::vector<GLuint> fgame_textures;
 std::vector<GLuint> item_textures;
 byte* item_cluts;
+GLuint item_cluts_texture;
 std::vector<std::vector<Sprite>> generic_sprite_banks;
 GLuint generic_powerup_texture;
 GLuint generic_saveroom_texture;
 GLuint generic_loadroom_texture;
 
-// Open the settings file for reading
+
+/**
+ * Opens the SotN section of the imgui.ini file.
+ */
 static void* SotN_ReadOpen(ImGuiContext*, ImGuiSettingsHandler*, const char* name)
 {
     if (strcmp(name, "Data") != 0) {
@@ -73,16 +92,21 @@ static void* SotN_ReadOpen(ImGuiContext*, ImGuiSettingsHandler*, const char* nam
     return (void*)1;
 }
 
-// Read each line of the settings file
+/**
+ * Reads each line of the SotN entry.
+ */
 static void SotN_ReadLine(ImGuiContext* ctx, ImGuiSettingsHandler*, void*, const char* line)
 {
     char s[2048] = {0};
-    if (sscanf(line, "PsxPath=%[^\n]", s) == 1)                 { psx_path = ImStrdup(s); }
-    else if (sscanf(line, "BinPath=%[^\n]", s) == 1)            { bin_path = ImStrdup(s); }
-    else if (sscanf(line, "GfxPath=%[^\n]", s) == 1)            { gfx_path = ImStrdup(s); }
+    if (sscanf(line, "PsxPath=%2047[^\n]", s) == 1)                 { psx_path = ImStrdup(s); }
+    else if (sscanf(line, "BinPath=%2047[^\n]", s) == 1)            { bin_path = ImStrdup(s); }
+    else if (sscanf(line, "GfxPath=%2047[^\n]", s) == 1)            { gfx_path = ImStrdup(s); }
 }
 
 // Write all lines of the settings file
+/**
+ * Writes all lines to the SotN section of the imgui.ini file.
+ */
 static void SotN_WriteAll(ImGuiContext* ctx, ImGuiSettingsHandler* handler, ImGuiTextBuffer* buf)
 {
     // Create the data entry for the INI file
@@ -99,14 +123,23 @@ static void SotN_WriteAll(ImGuiContext* ctx, ImGuiSettingsHandler* handler, ImGu
 
 
 
+/**
+ * Blends the sprite to make it appear as a lightened overlay.
+ */
 static void blend_lighten(const ImDrawList* draw_list, const ImDrawCmd* cmd) {
     glBlendFunc(GL_SRC_ALPHA, GL_DST_ALPHA);
 }
 
+/**
+ * Blends the sprite as with the "Lighten" method, but gets rid of black masks.
+ */
 static void blend_fade_light(const ImDrawList* draw_list, const ImDrawCmd* cmd) {
     glBlendFunc(GL_ONE_MINUS_DST_COLOR, GL_DST_ALPHA);
 }
 
+/**
+ * Resets the blend mode.
+ */
 static void blend_default(const ImDrawList* draw_list, const ImDrawCmd* cmd) {
     glEnable(GL_BLEND);
     glBlendEquation(GL_FUNC_ADD);
@@ -124,6 +157,16 @@ static void blend_default(const ImDrawList* draw_list, const ImDrawCmd* cmd) {
 //     };
 //     nfdchar_t open_file(filters);
 //
+
+/**
+ * Prompts the user to select a file from their filesystem.
+ *
+ * @param filters: Array of file extension filters
+ *
+ * @return Pointer to a string if file was selected
+ * @return Null pointer if no file was selected
+ *
+ */
 static nfdchar_t* open_file(nfdfilteritem_t filters[]) {
     nfdchar_t* out_path;
     nfdresult_t result = NFD_OpenDialog(&out_path, filters, 1, nullptr);
@@ -141,8 +184,9 @@ static nfdchar_t* open_file(nfdfilteritem_t filters[]) {
 }
 
 
-
-// Initialize the MIPS emulator and most base game-related stuff
+/**
+ * Loads common data from the binary files and initializes the MIPS emulator.
+ */
 void load_sotn_data() {
 
     // Load binaries
@@ -166,7 +210,6 @@ void load_sotn_data() {
 
     // Read the pixels
     fread(fgame_pixels, sizeof(byte), 256 * 512 * 2, f_game);
-
     byte* fgame_pixeldata = Utils::Indexed_to_RGBA(fgame_pixels, 256 * 512);
 
     // Read the texture data
@@ -177,6 +220,7 @@ void load_sotn_data() {
         // Add the texture pointer to the list of map textures
         fgame_textures.push_back(chunk_texture);
     }
+    free(fgame_pixeldata);
 
     fseek(f_game, 256 * 512 * 2, SEEK_SET);
     fread(generic_cluts, sizeof(byte), 256 * 16 * 2, f_game);
@@ -188,6 +232,9 @@ void load_sotn_data() {
 
     // Convert RGB1555 CLUT to RGBA CLUT
     Utils::CLUT_to_RGBA(generic_cluts, generic_rgba_cluts, 256, false);
+
+    // Free the allocated bytes since they're no longer needed
+    free(generic_cluts);
 
     // Create a texture for the RGBA CLUTs
     generic_cluts_texture = Utils::CreateTexture(generic_rgba_cluts, 256, 16);
@@ -242,6 +289,9 @@ void load_sotn_data() {
     // Clear out the F_GAME texture list
     fgame_textures.clear();
 
+    // Free up allocated VRAM data
+    free(vram_data);
+
     // Bind to the F_GAME texture
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, fgame_texture, 0);
 
@@ -284,7 +334,17 @@ void load_sotn_data() {
 
     // Read the save room tileset
     tileset_data = (byte*)realloc(tileset_data, data_size);
+    if (tileset_data == nullptr) {
+        Log::Error("Failed to allocate memory for tileset data.\n");
+        free(tileset_data);
+        exit(1);
+    }
     compressed_data = (byte*)realloc(compressed_data, data_size);
+    if (compressed_data == nullptr) {
+        Log::Error("Failed to allocate memory for compressed data.\n");
+        free(tileset_data);
+        exit(1);
+    }
     MipsEmulator::CopyFromRAM(COMPRESSED_GENERIC_SAVEROOM_TILESET_ADDR, compressed_data, data_size);
     Compression::Decompress(tileset_data, compressed_data);
     pixel_data = Utils::Indexed_to_RGBA(tileset_data, data_size / 4);
@@ -293,7 +353,17 @@ void load_sotn_data() {
 
     // Read the save room tileset
     tileset_data = (byte*)realloc(tileset_data, data_size);
+    if (tileset_data == nullptr) {
+        Log::Error("Failed to allocate memory for tileset data.\n");
+        free(tileset_data);
+        exit(1);
+    }
     compressed_data = (byte*)realloc(compressed_data, data_size);
+    if (compressed_data == nullptr) {
+        Log::Error("Failed to allocate memory for compressed data.\n");
+        free(tileset_data);
+        exit(1);
+    }
     MipsEmulator::CopyFromRAM(COMPRESSED_GENERIC_LOADROOM_TILESET_ADDR, compressed_data, data_size);
     Compression::Decompress(tileset_data, compressed_data);
     pixel_data = Utils::Indexed_to_RGBA(tileset_data, data_size / 4);
@@ -319,29 +389,103 @@ void load_sotn_data() {
     fclose(dra_bin);
 
     // Get the pixel data for the items
-    byte* item_pixel_data = Utils::Indexed_to_RGBA(dra_bin_pixels, ((16 * 16) / 2) * 275);
+    byte* item_pixel_data = Utils::Indexed_to_RGBA(dra_bin_pixels, (((16 * 16) / 2) * 275) / 2);
 
     // Read the texture data
-    for (int i = 0; i < (((16 * 16) / 2) * 275) / 0x80; i++) {
+    for (int i = 0; i < 275; i++) {
 
         GLuint chunk_texture = Utils::CreateTexture(item_pixel_data + (i * 0x80 * 2), 16 / 4, 16);
 
         // Add the texture pointer to the list of map textures
         item_textures.push_back(chunk_texture);
     }
+    free(item_pixel_data);
 
     // Convert all item CLUTs to their RGBA equivalents
     item_cluts = (byte*)calloc(320 * 16 * 4, sizeof(byte));
 
     // Convert RGB1555 CLUT to RGBA CLUT
     Utils::CLUT_to_RGBA(dra_bin_cluts, item_cluts, 320, false);
+
+    // Create a texture for the RGBA CLUTs
+    item_cluts_texture = Utils::CreateTexture(item_cluts, 320, 16);
+
+    // Free temporary allocations
+    free(dra_bin_pixels);
+    free(dra_bin_cluts);
+}
+
+
+/**
+ * Loads data from the specified map file.
+ *
+ * @param map_path: Filesystem path of the file to open
+ *
+ */
+void load_map_data(const std::filesystem::path& map_path) {
+    std::string map_dir = map_path.parent_path().string();
+    std::string map_filename = map_path.filename().string();
+    std::string map_gfx_file = map_dir + "/F_" + map_filename;
+
+    // Make sure map graphics file exists in the same directory as the map file itself
+    if (FILE* fp = fopen(map_gfx_file.c_str(), "r")) {
+
+        // Close the file
+        fclose(fp);
+
+        // Initialize the emulator
+        if (MipsEmulator::initialized) {
+            map.Cleanup();
+        }
+        else {
+            MipsEmulator::Initialize();
+            // Initialize the graphics data, populate MIPS RAM, etc.
+            load_sotn_data();
+        }
+
+        // Load and process the map file
+        map.LoadMapFile(map_path.string().c_str());
+
+        // Load the map file itself into memory
+        MipsEmulator::LoadMapFile(map_path.string().c_str());
+
+        // Load the map graphics
+        map.LoadMapGraphics(map_gfx_file.c_str());
+
+
+        // Store map tile CLUTs in MIPS RAM
+        for (int i = 0; i < 256; i++) {
+            MipsEmulator::StoreMapCLUT(i * 32, 32, map.map_tile_cluts[i]);
+        }
+
+        // Store map entity CLUTs in MIPS RAM
+        for (int i = 0; i < map.entity_cluts.size(); i++) {
+
+            // Get the current entity CLUT data
+            ClutEntry clut = map.entity_cluts[i];
+
+            // Store the CLUT in RAM
+            MipsEmulator::StoreMapCLUT(clut.offset, clut.count, clut.clut_data);
+        }
+
+        // Load the map entities
+        map.LoadMapEntities();
+
+        // Clear out any errors
+        error.clear();
+    }
+    else {
+        error = "Could not find graphics file (F_" + map_filename + ").";
+    }
 }
 
 
 
 
 
-
+/**
+ * Do the things.
+ */
 int main(int, char**)
 {
     // Setup window
@@ -373,8 +517,8 @@ int main(int, char**)
 #endif
 
     // Create window with graphics context
-    GLFWwindow* window = glfwCreateWindow(1280, 720, "SotN Editor", NULL, NULL);
-    if (window == NULL)
+    GLFWwindow* window = glfwCreateWindow(1280, 720, "SotN Editor", nullptr, nullptr);
+    if (window == nullptr)
         return 1;
 
     // Initialize GLEW
@@ -436,10 +580,6 @@ int main(int, char**)
 
 
 
-    // Uncomment these to enable debug printing to stdout
-    //MipsEmulator::debug = true;
-    //GteEmulator::debug = true;
-
     // Keep dockspace open
     static bool open = true;
 
@@ -451,6 +591,12 @@ int main(int, char**)
 
     // Currently-selected entity in the Main Viewport
     static Entity* selected_entity;
+
+    // Main viewport drawing offset
+    static ImVec2 camera(0.0f, 0.0f);
+
+    // Uncomment to enable debug logging to stdout
+    //Log::level = LOG_DEBUG;
 
 
 
@@ -509,59 +655,16 @@ int main(int, char**)
 
                         // Get the filename and directory of the map file
                         std::filesystem::path map_path = std::filesystem::path(out_path);
-                        std::string map_dir = map_path.parent_path().string();
-                        std::string map_filename = map_path.filename().string();
-                        std::string map_gfx_file = map_dir + "/F_" + map_filename;
 
-                        // Make sure map graphics file exists in the same directory as the map file itself
-                        if (FILE* fp = fopen(map_gfx_file.c_str(), "r")) {
+                        // Deselect the currently-selected entity
+                        selected_entity = nullptr;
 
-                            // Initialize the emulator
-                            if (MipsEmulator::initialized) {
-                                map.Cleanup();
-                                selected_entity = nullptr;
-                                //MipsEmulator::Cleanup();
-                            }
-                            else {
-                                MipsEmulator::Initialize();
-                                // Initialize the graphics data, populate MIPS RAM, etc.
-                                load_sotn_data();
-                            }
+                        // Set a status popup
+                        popup.text = "Loading map data for [" + map_path.filename().string() + "] ...";
+                        popup.flags = POPUP_EPHEMERAL;
 
-                            // Load and process the map file
-                            map.LoadMapFile(map_path.c_str());
-
-                            // Load the map file itself into memory
-                            MipsEmulator::LoadMapFile(map_path.c_str());
-
-                            // Load the map graphics
-                            map.LoadMapGraphics(map_gfx_file.c_str());
-
-
-                            // Store map tile CLUTs in MIPS RAM
-                            for (int i = 0; i < 256; i++) {
-                                MipsEmulator::StoreMapCLUT(i * 32, 32, map.map_tile_cluts[i]);
-                            }
-
-                            // Store map entity CLUTs in MIPS RAM
-                            for (int i = 0; i < map.entity_cluts.size(); i++) {
-
-                                // Get the current entity CLUT data
-                                ClutEntry clut = map.entity_cluts[i];
-
-                                // Store the CLUT in RAM
-                                MipsEmulator::StoreMapCLUT(clut.offset, clut.count, clut.clut_data);
-                            }
-
-                            // Load the map entities
-                            map.LoadMapEntities();
-
-                            // Clear out any errors
-                            error.clear();
-                        }
-                        else {
-                            error = "Could not find graphics file (F_" + map_filename + ").";
-                        }
+                        // Set the map loading function as a callback to the status popup
+                        popup.callback = [map_path] { return load_map_data(map_path); };
                     }
                 }
 
@@ -603,7 +706,7 @@ int main(int, char**)
 
         // Get the center of the viewport
         ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-        ImGuiWindowFlags modal_flags = ImGuiWindowFlags_AlwaysAutoResize;
+        ImGuiWindowFlags modal_flags = ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings;
 
         // Center the PSX prompt
         ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
@@ -696,7 +799,7 @@ int main(int, char**)
         ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 
         // Prompt user to select the F_GAME.BIN file for graphics loading
-        if (ImGui::BeginPopupModal("Select F_GAME.BIN file", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (ImGui::BeginPopupModal("Select F_GAME.BIN file", nullptr, modal_flags)) {
             if (!error.empty()) {
                 ImGui::TextColored(ImVec4(255, 0, 0, 255), "%s", error.c_str());
             }
@@ -761,7 +864,6 @@ int main(int, char**)
 
         if (ImGui::DockBuilderGetNode(ImGui::GetID("DockSpace")) == nullptr) {
             ImGuiID dockspace_id = ImGui::GetID("DockSpace");
-            ImGuiViewport* viewport = ImGui::GetMainViewport();
 
             // Reset layout
             ImGui::DockBuilderRemoveNode(dockspace_id);
@@ -841,14 +943,13 @@ int main(int, char**)
                         ImGui::Text("Entity Name: %s", selected_entity->name.c_str());
                     }
                     if (!selected_entity->desc.empty()) {
-
                         ImGui::Text("Entity Desc: %s", selected_entity->desc.c_str());
                     }
                     ImGui::Text("Entity ID: %04X", selected_entity->id);
                     ImGui::Text("Entity Slot: %04X", selected_entity->slot);
                     ImGui::Text("Sprite Address: %08X", selected_entity->sprite_address + MAP_BIN_OFFSET);
-                    static ImGuiTableFlags flags = ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV | ImGuiTableFlags_ContextMenuInBody;
-                    if (ImGui::BeginTable("Entity Data", 5, flags)) {
+                    static ImGuiTableFlags table_flags = ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV | ImGuiTableFlags_ContextMenuInBody;
+                    if (ImGui::BeginTable("Entity Data", 5, table_flags)) {
                         uint cur_offset = 0;
 
                         ImGui::TableNextRow();
@@ -1406,9 +1507,6 @@ int main(int, char**)
                 // No padding for main scrolling viewport
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
 
-                // Current drawing offset
-                static ImVec2 offset(0.0f, 0.0f);
-
                 // Create a child window
                 if (ImGui::BeginChild("MainViewportDisplay", ImVec2(0, 0), true, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
 
@@ -1417,13 +1515,13 @@ int main(int, char**)
                     ImGui::InvisibleButton("##MainCanvas", ImGui::GetWindowSize());
                     if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left))
                     {
-                        offset.x += ImGui::GetIO().MouseDelta.x;
-                        offset.y += ImGui::GetIO().MouseDelta.y;
+                        camera.x += ImGui::GetIO().MouseDelta.x;
+                        camera.y += ImGui::GetIO().MouseDelta.y;
                     }
 
                     // Update offsets with scroll
-                    offset.x += io.MouseWheelH * 2;
-                    offset.y += io.MouseWheel * 2;
+                    camera.x += io.MouseWheelH * 2;
+                    camera.y += io.MouseWheel * 2;
 
                     ImGui::PopID();
 
@@ -1445,7 +1543,7 @@ int main(int, char**)
                     ImVec2 bak_pos = ImGui::GetCursorPos();
 
                     // Create an image at 0,0
-                    ImGui::SetCursorPos(ImVec2(offset.x, offset.y));
+                    ImGui::SetCursorPos(ImVec2(camera.x, camera.y));
 
 
 
@@ -1485,21 +1583,20 @@ int main(int, char**)
 
 
 
-                    ImGuiIO& io = ImGui::GetIO();
                     if (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Equal)) {
-                        float x_ratio = offset.x / (map_width * zoom_amount);
-                        float y_ratio = offset.y / (map_height * zoom_amount);
+                        float x_ratio = camera.x / (map_width * zoom_amount);
+                        float y_ratio = camera.y / (map_height * zoom_amount);
                         zoom_amount *= 2;
-                        offset.x = x_ratio * (map_width * zoom_amount) - (ImGui::GetWindowSize().x / 2);
-                        offset.y = y_ratio * (map_height * zoom_amount) - (ImGui::GetWindowSize().y / 2);
+                        camera.x = x_ratio * (map_width * zoom_amount) - (ImGui::GetWindowSize().x / 2);
+                        camera.y = y_ratio * (map_height * zoom_amount) - (ImGui::GetWindowSize().y / 2);
                     }
                     if (ImGui::IsKeyPressed(ImGuiKey_Minus)) {
                         // Get the current X/Y ratio
-                        float x_ratio = offset.x / (map_width * zoom_amount);
-                        float y_ratio = offset.y / (map_height * zoom_amount);
+                        float x_ratio = camera.x / (map_width * zoom_amount);
+                        float y_ratio = camera.y / (map_height * zoom_amount);
                         zoom_amount /= 2;
-                        offset.x = x_ratio * (map_width * zoom_amount) + (ImGui::GetWindowSize().x / 4);
-                        offset.y = y_ratio * (map_height * zoom_amount) + (ImGui::GetWindowSize().y / 4);
+                        camera.x = x_ratio * (map_width * zoom_amount) + (ImGui::GetWindowSize().x / 4);
+                        camera.y = y_ratio * (map_height * zoom_amount) + (ImGui::GetWindowSize().y / 4);
                     }
 
                     // Don't space out the items
@@ -1517,7 +1614,7 @@ int main(int, char**)
                             continue;
                         }
 
-                        ImGui::SetCursorPos(ImVec2(offset.x, offset.y));
+                        ImGui::SetCursorPos(ImVec2(camera.x, camera.y));
 
                         uint x_coord = (cur_room->x_start - x_min) * 256 * zoom_amount;
                         uint y_coord = (cur_room->y_start - y_min) * 256 * zoom_amount;
@@ -1535,8 +1632,8 @@ int main(int, char**)
                                 EntitySpritePart* cur_sprite = &sprites[p];
 
                                 // Get the X/Y coords
-                                float sprite_x = offset.x + x_coord + (cur_sprite->x * zoom_amount);
-                                float sprite_y = offset.y + y_coord + (cur_sprite->y * zoom_amount);
+                                float sprite_x = camera.x + x_coord + (cur_sprite->x * zoom_amount);
+                                float sprite_y = camera.y + y_coord + (cur_sprite->y * zoom_amount);
 
                                 // Set the cursor position to the target item
                                 ImGui::SetCursorPos(ImVec2(sprite_x, sprite_y));
@@ -1564,15 +1661,15 @@ int main(int, char**)
 
                                 // Draw the image
                                 ImGui::Image(
-                                        (void*)(intptr_t)cur_sprite->texture,
-                                        ImVec2((float)cur_sprite->width * zoom_amount, (float)cur_sprite->height * zoom_amount),
-                                        uv0, uv1
+                                    (void*)(intptr_t)cur_sprite->texture,
+                                    ImVec2((float)cur_sprite->width * zoom_amount, (float)cur_sprite->height * zoom_amount),
+                                    uv0, uv1
                                 );
                                 draw_list->AddCallback(blend_default, nullptr);
                             }
                         }
                         // Draw the actual background on top of everything below it
-                        ImGui::SetCursorPos(ImVec2(offset.x + (float)x_coord, offset.y + (float)y_coord));
+                        ImGui::SetCursorPos(ImVec2(camera.x + (float)x_coord, camera.y + (float)y_coord));
                         ImGui::Image((void*)(intptr_t)cur_room->bg_texture, ImVec2(cur_room->bg_layer.width * 16 * zoom_amount, cur_room->bg_layer.height * 16 * zoom_amount));
                     }
 
@@ -1584,7 +1681,7 @@ int main(int, char**)
                             continue;
                         }
 
-                        ImGui::SetCursorPos(ImVec2(offset.x, offset.y));
+                        ImGui::SetCursorPos(ImVec2(camera.x, camera.y));
 
                         uint x_coord = (cur_room->x_start - x_min) * 256 * zoom_amount;
                         uint y_coord = (cur_room->y_start - y_min) * 256 * zoom_amount;
@@ -1602,8 +1699,8 @@ int main(int, char**)
                                 EntitySpritePart* cur_sprite = &sprites[p];
 
                                 // Get the X/Y coords
-                                float sprite_x = offset.x + x_coord + (cur_sprite->x * zoom_amount);
-                                float sprite_y = offset.y + y_coord + (cur_sprite->y * zoom_amount);
+                                float sprite_x = camera.x + x_coord + (cur_sprite->x * zoom_amount);
+                                float sprite_y = camera.y + y_coord + (cur_sprite->y * zoom_amount);
 
                                 // Set the cursor position to the target item
                                 ImGui::SetCursorPos(ImVec2(sprite_x, sprite_y));
@@ -1693,8 +1790,8 @@ int main(int, char**)
                                                 float tmp_y = buf[vtx_idx + 0].pos.y;
                                                 buf[vtx_idx + 0].pos.y = buf[vtx_idx + 2].pos.y;
                                                 buf[vtx_idx + 2].pos.y = tmp_y;
-                                                tmp_y = buf[vtx_idx + 2].pos.y;
-                                                buf[vtx_idx + 1].pos.y = buf[vtx_idx + 1].pos.y;
+                                                tmp_y = buf[vtx_idx + 1].pos.y;
+                                                buf[vtx_idx + 1].pos.y = buf[vtx_idx + 3].pos.y;
                                                 buf[vtx_idx + 3].pos.y = tmp_y;
                                             }
                                             buf[vtx_idx + 0].pos.x += (cur_sprite->top_left.x * zoom_amount);
@@ -1710,9 +1807,9 @@ int main(int, char**)
                                 }
                                 else {
                                     ImGui::Image(
-                                            (void*)(intptr_t)cur_sprite->texture,
-                                            ImVec2((float)cur_sprite->width * zoom_amount, (float)cur_sprite->height * zoom_amount),
-                                            uv0, uv1
+                                        (void*)(intptr_t)cur_sprite->texture,
+                                        ImVec2((float)cur_sprite->width * zoom_amount, (float)cur_sprite->height * zoom_amount),
+                                        uv0, uv1
                                     );
                                 }
                                 draw_list->AddCallback(blend_default, nullptr);
@@ -1728,12 +1825,12 @@ int main(int, char**)
                             continue;
                         }
 
-                        ImGui::SetCursorPos(ImVec2(offset.x, offset.y));
+                        ImGui::SetCursorPos(ImVec2(camera.x, camera.y));
 
                         uint x_coord = (cur_room->x_start - x_min) * 256 * zoom_amount;
                         uint y_coord = (cur_room->y_start - y_min) * 256 * zoom_amount;
 
-                        ImGui::SetCursorPos(ImVec2(offset.x + (float)x_coord, offset.y + (float)y_coord));
+                        ImGui::SetCursorPos(ImVec2(camera.x + (float)x_coord, camera.y + (float)y_coord));
                         ImGui::Image((void*)(intptr_t)cur_room->fg_texture, ImVec2(cur_room->fg_layer.width * 16 * zoom_amount, cur_room->fg_layer.height * 16 * zoom_amount));
 
                         for (auto const& layer : cur_room->fg_ordering_table) {
@@ -1749,8 +1846,8 @@ int main(int, char**)
                                 EntitySpritePart* cur_sprite = &sprites[p];
 
                                 // Get the X/Y coords
-                                float sprite_x = offset.x + x_coord + (cur_sprite->x * zoom_amount);
-                                float sprite_y = offset.y + y_coord + (cur_sprite->y * zoom_amount);
+                                float sprite_x = camera.x + x_coord + (cur_sprite->x * zoom_amount);
+                                float sprite_y = camera.y + y_coord + (cur_sprite->y * zoom_amount);
 
                                 // Set the cursor position to the target item
                                 ImGui::SetCursorPos(ImVec2(sprite_x, sprite_y));
@@ -1790,19 +1887,19 @@ int main(int, char**)
 
                                         ImVec2 clip_min = ImGui::GetWindowDrawList()->GetClipRectMin();
                                         ImGui::GetWindowDrawList()->AddRectFilledMultiColor(
-                                                ImVec2(sprite_x + clip_min.x, sprite_y + clip_min.y),
-                                                ImVec2(sprite_x + (float)cur_sprite->width * zoom_amount + clip_min.x, sprite_y + (float)cur_sprite->height * zoom_amount + clip_min.y),
-                                                IM_COL32(255, 255, 255, 255),
-                                                IM_COL32(255, 255, 255, 255),
-                                                IM_COL32(255, 255, 255, 255),
-                                                IM_COL32(255, 255, 255, 255)
+                                            ImVec2(sprite_x + clip_min.x, sprite_y + clip_min.y),
+                                            ImVec2(sprite_x + (float)cur_sprite->width * zoom_amount + clip_min.x, sprite_y + (float)cur_sprite->height * zoom_amount + clip_min.y),
+                                            IM_COL32(255, 255, 255, 255),
+                                            IM_COL32(255, 255, 255, 255),
+                                            IM_COL32(255, 255, 255, 255),
+                                            IM_COL32(255, 255, 255, 255)
                                         );
                                     }
                                     else {
                                         ImGui::Image(
-                                                (void*)(intptr_t)cur_sprite->texture,
-                                                ImVec2((float)cur_sprite->width * zoom_amount, (float)cur_sprite->height * zoom_amount),
-                                                uv0, uv1
+                                            (void*)(intptr_t)cur_sprite->texture,
+                                            ImVec2((float)cur_sprite->width * zoom_amount, (float)cur_sprite->height * zoom_amount),
+                                            uv0, uv1
                                         );
                                     }
 
@@ -1840,8 +1937,8 @@ int main(int, char**)
                                                 float tmp_y = buf[vtx_idx + 0].pos.y;
                                                 buf[vtx_idx + 0].pos.y = buf[vtx_idx + 2].pos.y;
                                                 buf[vtx_idx + 2].pos.y = tmp_y;
-                                                tmp_y = buf[vtx_idx + 2].pos.y;
-                                                buf[vtx_idx + 1].pos.y = buf[vtx_idx + 1].pos.y;
+                                                tmp_y = buf[vtx_idx + 1].pos.y;
+                                                buf[vtx_idx + 1].pos.y = buf[vtx_idx + 3].pos.y;
                                                 buf[vtx_idx + 3].pos.y = tmp_y;
                                             }
                                             buf[vtx_idx + 0].pos.x += (cur_sprite->top_left.x * zoom_amount);
@@ -1857,9 +1954,9 @@ int main(int, char**)
                                 }
                                 else {
                                     ImGui::Image(
-                                            (void*)(intptr_t)cur_sprite->texture,
-                                            ImVec2((float)cur_sprite->width * zoom_amount, (float)cur_sprite->height * zoom_amount),
-                                            uv0, uv1
+                                        (void*)(intptr_t)cur_sprite->texture,
+                                        ImVec2((float)cur_sprite->width * zoom_amount, (float)cur_sprite->height * zoom_amount),
+                                        uv0, uv1
                                     );
                                 }
                                 draw_list->AddCallback(blend_default, nullptr);
@@ -1895,10 +1992,10 @@ int main(int, char**)
 
                         // Make the button have only an outline
                         ImGuiColorEditFlags color_flags = (
-                                ImGuiColorEditFlags_AlphaPreview |
-                                ImGuiColorEditFlags_NoTooltip |
-                                ImGuiColorEditFlags_NoDragDrop |
-                                ImGuiColorEditFlags_NoCheckerboard
+                            ImGuiColorEditFlags_AlphaPreview |
+                            ImGuiColorEditFlags_NoTooltip |
+                            ImGuiColorEditFlags_NoDragDrop |
+                            ImGuiColorEditFlags_NoCheckerboard
                         );
 
                         // Get the entity init data
@@ -1906,7 +2003,7 @@ int main(int, char**)
                         std::vector<EntityInitData> init_data_list = map.entity_layouts[entity_layout_id];
 
                         // Draw the room name
-                        ImGui::SetCursorPos(ImVec2(offset.x + x_coord, offset.y + y_coord));
+                        ImGui::SetCursorPos(ImVec2(camera.x + x_coord, camera.y + y_coord));
                         ImGui::Text("Room %d", i);
 
 
@@ -1926,15 +2023,15 @@ int main(int, char**)
                             // Set the cursor position to the target item
                             ImGui::SetCursorPos(
                                 ImVec2(
-                                    offset.x + x_coord + (entity->data.pos_x * zoom_amount) - (button_width / 2),
-                                    offset.y + y_coord + (entity->data.pos_y * zoom_amount) - (button_height / 2)
+                                    camera.x + x_coord + (entity->data.pos_x * zoom_amount) - (button_width / 2),
+                                    camera.y + y_coord + (entity->data.pos_y * zoom_amount) - (button_height / 2)
                                 )
                             );
 
                             // Draw an outline around the entity
                             ImGui::PushID(entity_uuid);
                             if (ImGui::ColorButton("##test", ImVec4(0, 0, 0, 0), color_flags, ImVec2(button_width, button_height))) {
-                                printf("Clicked entity %d in room %d\n", k, i);
+                                Log::Info("Clicked entity %d in room %d\n", k, i);
                                 selected_entity = &map.rooms[i].entities[k];
                             }
                             ImGui::PopID();
@@ -1983,7 +2080,7 @@ int main(int, char**)
                 static ImVec2 offset(0.0f, 0.0f);
 
                 // Create a child window
-                if (ImGui::BeginChild("MainVRAMDisplay", ImVec2(0, 0), true, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar)) {
+                if (ImGui::BeginChild("MainVRAMDisplay", ImVec2(0, 0), true, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
 
                     // Create an invisible button for the canvas
                     ImGui::PushID(0);
@@ -1993,6 +2090,11 @@ int main(int, char**)
                         offset.x += ImGui::GetIO().MouseDelta.x;
                         offset.y += ImGui::GetIO().MouseDelta.y;
                     }
+
+                    // Update offsets with scroll
+                    offset.x += io.MouseWheelH * 2;
+                    offset.y += io.MouseWheel * 2;
+
                     ImGui::PopID();
 
 
@@ -2020,6 +2122,9 @@ int main(int, char**)
 
 
 
+                    // Make the text not do a weird thing
+                    ImGui::Text("");
+
                     ImVec2 cursor_pos = ImGui::GetCursorPos();
                     ImGui::SetCursorPos(ImVec2(cursor_pos.x + offset.x, cursor_pos.y + 5));
                     ImGui::Text("Map VRAM:");
@@ -2038,6 +2143,14 @@ int main(int, char**)
 
                     cursor_pos = ImGui::GetCursorPos();
                     ImGui::SetCursorPos(ImVec2(cursor_pos.x + offset.x, cursor_pos.y + 5));
+                    ImGui::Text("Item CLUTs:");
+
+                    cursor_pos = ImGui::GetCursorPos();
+                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + offset.x, cursor_pos.y));
+                    ImGui::Image((void*)(intptr_t)item_cluts_texture, ImVec2(320, 16));
+
+                    cursor_pos = ImGui::GetCursorPos();
+                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + offset.x, cursor_pos.y + 5));
                     ImGui::Text("Tileset 7:");
 
                     cursor_pos = ImGui::GetCursorPos();
@@ -2045,12 +2158,24 @@ int main(int, char**)
                     ImGui::Image((void*)(intptr_t)map.map_tilesets[7], ImVec2(64, 256));
 
                     cursor_pos = ImGui::GetCursorPos();
+                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + offset.x, cursor_pos.y + 5));
+                    ImGui::Text("F_GAME.BIN VRAM Texture:");
+
+                    cursor_pos = ImGui::GetCursorPos();
                     ImGui::SetCursorPos(ImVec2(cursor_pos.x + offset.x, cursor_pos.y));
                     ImGui::Image((void*)(intptr_t)fgame_texture, ImVec2(512, 256));
 
                     cursor_pos = ImGui::GetCursorPos();
+                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + offset.x, cursor_pos.y + 5));
+                    ImGui::Text("F_GAME.BIN Texture 7:");
+
+                    cursor_pos = ImGui::GetCursorPos();
                     ImGui::SetCursorPos(ImVec2(cursor_pos.x + offset.x, cursor_pos.y));
                     ImGui::Image((void*)(intptr_t)fgame_textures[7], ImVec2(64, 256));
+
+                    cursor_pos = ImGui::GetCursorPos();
+                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + offset.x, cursor_pos.y + 5));
+                    ImGui::Text("MIPS Framebuffer:");
 
                     cursor_pos = ImGui::GetCursorPos();
                     ImGui::SetCursorPos(ImVec2(cursor_pos.x + offset.x, cursor_pos.y));
@@ -2072,8 +2197,6 @@ int main(int, char**)
             else {
                 ImGui::Text("Map file not loaded.");
             }
-
-            //ImGui::Image((void*)(intptr_t)map.map_textures[(tileset * 4) + tex_x + (tex_y * 2)], ImVec2(32, 128));
         }
         ImGui::End();
 
@@ -2081,20 +2204,71 @@ int main(int, char**)
 
 
 
-// -- Generic Error Popup --------------------------------------------------------------------------------------
+// -- Generic Info Popup ---------------------------------------------------------------------------------------
 
-        if (!error.empty() && !ImGui::IsPopupOpen("any", ImGuiPopupFlags_AnyPopupId)) {
-            ImGui::OpenPopup("Error");
+        if ((!error.empty() || !popup.text.empty()) && !ImGui::IsPopupOpen("any", ImGuiPopupFlags_AnyPopupId)) {
+            ImGui::OpenPopup("Info");
         }
 
-        // Display error message
-        if (ImGui::BeginPopupModal("Error", nullptr, modal_flags)) {
-            ImGui::Text("SotN Editor has encountered an error.\n\nDetails:");
-            ImGui::TextColored(ImVec4(255, 0, 0, 255), "%s\n\n", error.c_str());
-            ImGui::Separator();
-            if (ImGui::Button("OK", ImVec2(120, 0))) {
-                error.clear();
-                ImGui::CloseCurrentPopup();
+        // Display popup
+        if (ImGui::BeginPopupModal("Info", nullptr, modal_flags)) {
+
+            // Error-specific popup
+            if (!error.empty()) {
+                ImGui::Text("SotN Editor has encountered an error.\n\nDetails:");
+                ImGui::TextColored(ImVec4(255, 0, 0, 255), "%s\n\n", error.c_str());
+                ImGui::Separator();
+                if (ImGui::Button("OK", ImVec2(120, 0))) {
+                    error.clear();
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+
+            // Generic popup
+            else {
+
+                ImGui::Text("%s", popup.text.c_str());
+
+                // Show an OK button to close the popup
+                if ((popup.flags | POPUP_HAS_OK) == POPUP_HAS_OK) {
+                    ImGui::Separator();
+                    if (ImGui::Button("OK", ImVec2(120, 0))) {
+                        ImGui::CloseCurrentPopup();
+                        popup.text.clear();
+                        popup.flags = POPUP_NONE;
+                    }
+                }
+
+                // Close the popup on the next frame
+                else if ((popup.flags | POPUP_EPHEMERAL) == POPUP_EPHEMERAL) {
+
+                    // Wait until the popup is visible before flagging it to close
+                    ImGuiWindow* win = ImGui::GetTopMostAndVisiblePopupModal();
+                    if (win != nullptr) {
+                        popup.flags = POPUP_CLOSE;
+                    }
+                }
+
+                // Close the popup
+                else if ((popup.flags | POPUP_CLOSE) == POPUP_CLOSE) {
+
+                    // Run any popup callbacks
+                    if (popup.callback != nullptr) {
+                        popup.callback();
+                        popup.callback = nullptr;
+                    }
+
+                    // Close the popup and clear data
+                    ImGui::CloseCurrentPopup();
+                    popup.text.clear();
+                    popup.flags = POPUP_NONE;
+                }
+                // Close the popup automatically if no flags were set
+                else {
+                    popup.text.clear();
+                    ImGui::CloseCurrentPopup();
+                    popup.flags = POPUP_NONE;
+                }
             }
             ImGui::EndPopup();
         }
@@ -2103,7 +2277,7 @@ int main(int, char**)
 
 
 
-// -- Cleanup --------------------------------------------------------------------------------------------------
+// -- Render ---------------------------------------------------------------------------------------------------
 
         ImGui::PopStyleColor();
         ImGui::PopStyleColor();
@@ -2123,7 +2297,6 @@ int main(int, char**)
 
         // Update and Render additional Platform Windows
         // (Platform functions may change the current OpenGL context, so we save/restore it to make it easier to paste this code elsewhere.
-        //  For this specific demo app we could also call glfwMakeContextCurrent(window) directly)
         if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
         {
             GLFWwindow* backup_current_context = glfwGetCurrentContext();
@@ -2144,6 +2317,10 @@ int main(int, char**)
 
     glfwDestroyWindow(window);
     glfwTerminate();
+
+    // Clean up MIPS data and map data
+    map.Cleanup();
+    MipsEmulator::Cleanup();
 
     return 0;
 }
