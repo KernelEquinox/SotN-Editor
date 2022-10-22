@@ -6,6 +6,14 @@ It is currently only capable of parsing and displaying data contained within map
 
 ![SotN Editor interface](Screenshot.png)
 
+## Usage
+
+When loading for the first time, SotN Editor will ask for the locations of the PSX binary (`SLUS000.67`), the SotN binary (`DRA.BIN`), and the common graphics file (`BIN/F_GAME.BIN`).
+
+To load a map file, click on `File` -> `Open Map File`, then select one of the map files in the `ST/` or `BOSS/` directory (e.g. `ST/ARE/ARE.BIN`).
+
+Once the map is loaded, the map can be navigated by either clicking and dragging or by using the scroll wheel or touchpad to pan around the map. Clicking on an entity will display the entity's properties in the left-hand Properties window.
+
 ## Building
 
 Requirements:
