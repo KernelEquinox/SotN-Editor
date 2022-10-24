@@ -40,6 +40,7 @@ $ make
 
 ## Known Issues
 
+* `RBO5.BIN` crashes due to a null pointer dereference related to mishandled sprites
 * Some rooms overlap each other
 * Some sprites utilizing POLY_GT4 structs display on top of other rooms
 * The lever in NO1 (Outer Wall) has a mismatched CLUT
