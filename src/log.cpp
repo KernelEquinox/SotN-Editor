@@ -1,51 +1,12 @@
 #include <stdexcept>
 #include <cstdarg>
 #include "log.h"
+#include "utils.h"
 
 
 
 // Default to info level logging
 uint Log::level = LOG_INFO;
-
-
-
-/**
- * Formats a string for inclusion in output functionality.
- *
- * @param fmt: Format string
- * @param args: List of arguments to include in the output string
- *
- * @return Formatted string
- *
- * @throw invalid_argument: Thrown if the format arguments weren't able to be parsed.
- *
- */
-std::string format_string(const char* fmt, va_list args) {
-
-    // Get the size of the string
-    int len = vsnprintf(nullptr, 0, fmt, args) + 1;
-
-    // Check if length was invalid
-    if (len <= 0) {
-        va_end(args);
-        throw std::invalid_argument("ERROR: Couldn't parse format arguments.");
-    }
-
-    // Allocate a new char buffer
-    char* buf = (char*)calloc(len, sizeof(byte));
-
-    // Copy args to string
-    vsnprintf(buf, len, fmt, args);
-
-    // Create string from char buffer
-    std::string log_msg = std::string(buf);
-
-    // Free the allocated buffer
-    free(buf);
-
-    // Return the formatted string
-    return log_msg;
-}
 
 
 
@@ -65,7 +26,7 @@ void Log::Debug(const char* fmt, ...) {
 
     va_list args;
     va_start(args, fmt);
-    std::string output = format_string(fmt, args);
+    std::string output = Utils::FormatStringArgs(fmt, args);
     printf("[DEBUG]    %s", output.c_str());
     va_end(args);
 }
@@ -88,7 +49,7 @@ void Log::Info(const char* fmt, ...) {
 
     va_list args;
     va_start(args, fmt);
-    std::string output = format_string(fmt, args);
+    std::string output = Utils::FormatStringArgs(fmt, args);
     printf("[INFO]     %s", output.c_str());
     va_end(args);
 }
@@ -111,7 +72,7 @@ void Log::Warn(const char* fmt, ...) {
 
     va_list args;
     va_start(args, fmt);
-    std::string output = format_string(fmt, args);
+    std::string output = Utils::FormatStringArgs(fmt, args);
     printf("[WARN]     %s", output.c_str());
     va_end(args);
 }
@@ -134,7 +95,7 @@ void Log::Error(const char* fmt, ...) {
 
     va_list args;
     va_start(args, fmt);
-    std::string output = format_string(fmt, args);
+    std::string output = Utils::FormatStringArgs(fmt, args);
     printf("[ERROR]    %s", output.c_str());
     va_end(args);
 }

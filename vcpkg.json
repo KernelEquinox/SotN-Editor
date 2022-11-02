@@ -1,0 +1,8 @@
+{
+  "name": "sotn-editor",
+  "dependencies": [
+    "glfw3",
+    "glew",
+    "opengl"
+  ]
+}

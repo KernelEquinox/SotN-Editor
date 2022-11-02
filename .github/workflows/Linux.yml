@@ -1,0 +1,59 @@
+name: Linux
+
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+
+env:
+  BUILD_TYPE: Release
+
+
+jobs:
+  # Build executable for Linux
+  build-linux:
+    name: Linux
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: true
+
+      - name: Install Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y libglew-dev libgtk-3-dev
+
+      - name: Fetch GLFW
+        run: git clone https://github.com/glfw/glfw
+
+      - name: Configure CMake for GLFW
+        run: cmake -S glfw -B glfw/build -DGLFW_BUILD_EXAMPLES=OFF -DGLFW_BUILD_TESTS=OFF -DGLFW_BUILD_DOCS=OFF
+
+      - name: Build GLFW Static Library
+        run: cmake --build glfw/build && sudo make -C glfw/build install
+
+      - name: Fetch GLEW
+        run: git clone https://github.com/nigels-com/glew
+
+      - name: Build GLEW Static Library
+        run: make -C glew/auto && make -C glew && sudo make -C glew install
+
+      - name: Configure CMake for SotN Editor
+        run: cmake -B build -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$BUILD_TYPE -DGLEW_USE_STATIC_LIBS=1
+
+      - name: Build SotN Editor
+        run: |
+          cmake --build build --config $BUILD_TYPE
+          mv build/$BUILD_TYPE/SotN_Editor ./SotN_Editor
+          7z a SotN_Editor_Linux.zip SotN_Editor
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: SotN-Editor-ubuntu-latest-build
+          path: SotN_Editor_Linux.zip

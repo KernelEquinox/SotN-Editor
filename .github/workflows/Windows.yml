@@ -1,0 +1,42 @@
+name: Windows
+
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+
+env:
+  BUILD_TYPE: Release
+
+
+jobs:
+  # Build executable for Windows
+  build-windows:
+    name: Windows
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: true
+
+      - name: Clone vcpkg
+        run: git clone https://github.com/microsoft/vcpkg.git
+
+      - name: Configure CMake for SotN Editor
+        run: cmake -B build -DCMAKE_BUILD_TYPE=$env:BUILD_TYPE -DCMAKE_TOOLCHAIN_FILE="vcpkg/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static
+
+      - name: Build SotN Editor
+        run: |
+          cmake --build build --config $env:BUILD_TYPE
+          move build/$env:BUILD_TYPE/SotN_Editor.exe SotN_Editor.exe
+          7z a SotN_Editor_Windows.zip SotN_Editor.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: SotN-Editor-windows-latest-build
+          path: SotN_Editor_Windows.zip

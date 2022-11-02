@@ -1,9 +1,10 @@
 #ifndef SOTN_EDITOR_ENTITIES
 #define SOTN_EDITOR_ENTITIES
 
-#include <stdbool.h>
 #include <string>
 #include <vector>
+#include <map>
+#include <variant>
 #if defined(IMGUI_IMPL_OPENGL_ES2)
 #include <GLES2/gl2.h>
 #endif
@@ -52,20 +53,17 @@ typedef struct EntityData {
                                         // 1 . . . . . . .     Flicker?
 
     // These are used when a wall is coming down, etc.
-    short fx_width = 0;
-    short fx_height = 0;
+    short scale_x = 0;
+    short scale_y = 0;
 
-    // General purpose progress measurement
-    // Examples:
-    //     The platform you stand on to lower the wall in NO3:R10
-    //     How long red Merman recoil for after a fireball attack
-    short fx_timer = 0;
+    // Rotation amount (clockwise)
+    short rotation = 0;
 
     // X target coordinate of Alucard's outline for spells / MP recovery
-    short fx_coord_x = 0;
+    short translate_x = 0;
 
     // Y target coordinate of Alucard's outline for spells / MP recovery
-    short fx_coord_y = 0;
+    short translate_y = 0;
     short z_depth = 0;
     ushort object_id = 0;
     uint update_function = 0;
@@ -196,6 +194,7 @@ typedef struct EntityGraphicsData {
 	uint compressed_graphics_addr = 0;
 } EntityGraphicsData;
 
+// Polygon coordinates
 typedef struct PolygonCoords {
     int x = 0;
     int y = 0;
@@ -208,24 +207,39 @@ typedef struct EntitySpritePart {
     short offset_y = 0;
     ushort width = 0;
     ushort height = 0;
-    GLuint texture;
+    GLuint texture = 0;
     bool flip_x = false;
     bool flip_y = false;
     bool blend = false;
     uint blend_mode = 0;
+
+    // General properties
     bool override_coords = false;       // Used for POLY_GT4 primitives
     int ot_layer = -1;                  // Entity's entry in the OT
     int x = 0;                          // Absolute X coord in the room
     int y = 0;                          // Absolute Y coord in the room
+
 
     // Polygon-specific data for POLY_GT4 structs
     PolygonCoords top_left;
     PolygonCoords top_right;
     PolygonCoords bottom_left;
     PolygonCoords bottom_right;
-    bool skew = false;
     POLY_GT4 polygon;
+
+    // Sprite transformations
+    bool skew = false;
+    int rotate = 0;
+    int anchor_x = 0;
+    int anchor_y = 0;
 } EntitySpritePart;
+
+// Entity data for displaying and copying
+typedef struct EntityDataEntry {
+    int offset;
+    std::string name;
+    std::variant<char, byte, short, ushort, int, uint> value;
+} EntityDataEntry;
 
 // Address of allocatable entities in RAM (first 64 entity slots are reserved
 const uint ENTITY_ALLOCATION_START = ENTITY_LIST_START + (sizeof(EntityData) * 0x40);
@@ -239,6 +253,10 @@ class Entity {
 
         // Entity data
     	EntityData data;
+
+        // Entity data (as a map)
+        std::map<std::string, std::variant<char, byte, short, ushort, int, uint>> data_map;
+        std::vector<EntityDataEntry> data_vec;
 
         // Entity ID
         uint id = 0;
@@ -260,11 +278,17 @@ class Entity {
         uint texture_width = 0;
         uint texture_height = 0;
 
-        // Address of the sprite
+        // Address of the entity in RAM
+        uint address;
+
+        // Address of the sprite in RAM
         uint sprite_address = 0;
 
         // Check if entity has a POLY_GT4 sprite and is in the background
         bool is_bg_entity = false;
+
+        // Functions
+        void PopulateDataMap();
 
 
 

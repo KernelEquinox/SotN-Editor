@@ -1,0 +1,52 @@
+name: macOS
+
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+
+env:
+  BUILD_TYPE: Release
+
+
+jobs:
+  # Build executable for macOS
+  build-macos:
+    name: macOS
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: true
+
+      - name: Install Dependencies
+        run: brew install gtk+3 glew
+
+      - name: Fetch GLFW
+        run: git clone https://github.com/glfw/glfw
+
+      - name: Configure CMake for GLFW
+        run: cmake -S glfw -B glfw/build -DGLFW_BUILD_EXAMPLES=OFF -DGLFW_BUILD_TESTS=OFF -DGLFW_BUILD_DOCS=OFF
+
+      - name: Build GLFW Static Library
+        run: cmake --build glfw/build && sudo make -C glfw/build install
+
+      - name: Configure CMake for SotN Editor
+        run: cmake -B build -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$BUILD_TYPE -DGLEW_USE_STATIC_LIBS=1
+
+      - name: Build SotN Editor
+        run: |
+          cmake --build build --config $BUILD_TYPE
+          tar -cvf build/$BUILD_TYPE/SotN_Editor.tar -C build/$BUILD_TYPE SotN_Editor.app
+          mv build/$BUILD_TYPE/SotN_Editor.tar ./SotN_Editor.tar
+          7z a SotN_Editor_macOS.zip SotN_Editor.tar
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: SotN-Editor-macos-latest-build
+          path: SotN_Editor_macOS.zip

@@ -413,11 +413,9 @@ void MipsEmulator::ProcessFunction(uint func_addr)
 
         // Just bail if the opcode is a dummy function
         if (opcode == 0xFFFEFFFE) {
+            Log::Debug("Skipping function [dummy]\n");
             break;
         }
-
-        // Print status
-        //Log::Debug("PC: %08X  % 6d    ", pc + RAM_BASE_OFFSET, num_executed);
 
         // Execute the opcode
         ProcessOpcode(opcode);
@@ -541,6 +539,10 @@ std::vector<Entity> MipsEmulator::ProcessEntities() {
         // Update entity data
         entity.slot = entity_data->room_slot;
         entity.data = *entity_data;
+        entity.address = cur_offset;
+
+        // Populate entity data map
+        entity.PopulateDataMap();
 
         // Add the entity to the list
         entities.push_back(entity);
@@ -1008,7 +1010,6 @@ void MipsEmulator::i_xori(uint src_index, uint dst_index, short imm) {
 }
 
 void MipsEmulator::i_lui(uint src_index, uint dst_index, short imm) {
-    //uint src = registers[src_index];
     registers[dst_index] = (uint)(imm << 16);
     Log::Debug(
         "PC: %08X  % 6d    "
@@ -1568,7 +1569,6 @@ void MipsEmulator::r_nop(uint src_index1, uint src_index2, uint dst_index, uint 
 }
 
 void MipsEmulator::r_sll(uint src_index1, uint src_index2, uint dst_index, uint shamt) {
-    //uint src1 = registers[src_index1];
     uint src2 = registers[src_index2];
     registers[dst_index] = (uint)(src2 << shamt);
     Log::Debug(
@@ -1588,7 +1588,6 @@ void MipsEmulator::r_sll(uint src_index1, uint src_index2, uint dst_index, uint 
 }
 
 void MipsEmulator::r_srl(uint src_index1, uint src_index2, uint dst_index, uint shamt) {
-    //uint src1 = registers[src_index1];
     uint src2 = registers[src_index2];
     registers[dst_index] = (uint)(src2 >> shamt);
     Log::Debug(
@@ -1608,7 +1607,6 @@ void MipsEmulator::r_srl(uint src_index1, uint src_index2, uint dst_index, uint 
 }
 
 void MipsEmulator::r_sra(uint src_index1, uint src_index2, uint dst_index, uint shamt) {
-    //uint src1 = registers[src_index1];
     uint src2 = registers[src_index2];
     registers[dst_index] = (uint)(src2 >> shamt);
     // Check if result should be sign extended
@@ -1700,7 +1698,6 @@ void MipsEmulator::r_srav(uint src_index1, uint src_index2, uint dst_index, uint
 
 void MipsEmulator::r_jr(uint src_index1, uint src_index2, uint dst_index, uint shamt) {
     uint src1 = registers[src_index1];
-    //uint src2 = registers[src_index2];
     uint dest = src1 - RAM_BASE_OFFSET;
     Log::Debug(
     "PC: %08X  % 6d    -> JR %s (%08X)\n",
@@ -1709,9 +1706,6 @@ void MipsEmulator::r_jr(uint src_index1, uint src_index2, uint dst_index, uint s
         register_names[src_index1],
         dest
     );
-
-    // Increment PC
-    //pc += 4;
 
     // Execute next opcode
     num_executed++;
@@ -1729,7 +1723,6 @@ void MipsEmulator::r_jr(uint src_index1, uint src_index2, uint dst_index, uint s
 
 void MipsEmulator::r_jalr(uint src_index1, uint src_index2, uint dst_index, uint shamt) {
     uint src1 = registers[src_index1];
-    //uint src2 = registers[src_index2];
 
     uint func_start = src1 - RAM_BASE_OFFSET;
     Log::Debug(
@@ -1741,7 +1734,6 @@ void MipsEmulator::r_jalr(uint src_index1, uint src_index2, uint dst_index, uint
     );
 
     // Execute next opcode
-    //pc += 4;
     num_executed++;
     uint opcode = *(uint*)(ram + pc + 4);
     ProcessOpcode(opcode);
@@ -1785,8 +1777,6 @@ void MipsEmulator::r_jalr(uint src_index1, uint src_index2, uint dst_index, uint
 }
 
 void MipsEmulator::r_mfhi(uint src_index1, uint src_index2, uint dst_index, uint shamt) {
-    //uint src1 = registers[src_index1];
-    //uint src2 = registers[src_index2];
     registers[dst_index] = hi;
     Log::Debug(
         "PC: %08X  % 6d    "
@@ -1804,7 +1794,6 @@ void MipsEmulator::r_mfhi(uint src_index1, uint src_index2, uint dst_index, uint
 
 void MipsEmulator::r_mthi(uint src_index1, uint src_index2, uint dst_index, uint shamt) {
     uint src1 = registers[src_index1];
-    //uint src2 = registers[src_index2];
     hi = src1;
     Log::Debug(
         "PC: %08X  % 6d    "
@@ -1820,8 +1809,6 @@ void MipsEmulator::r_mthi(uint src_index1, uint src_index2, uint dst_index, uint
 }
 
 void MipsEmulator::r_mflo(uint src_index1, uint src_index2, uint dst_index, uint shamt) {
-    //uint src1 = registers[src_index1];
-    //uint src2 = registers[src_index2];
     registers[dst_index] = lo;
     Log::Debug(
         "PC: %08X  % 6d    "
@@ -1839,7 +1826,6 @@ void MipsEmulator::r_mflo(uint src_index1, uint src_index2, uint dst_index, uint
 
 void MipsEmulator::r_mtlo(uint src_index1, uint src_index2, uint dst_index, uint shamt) {
     uint src1 = registers[src_index1];
-    //uint src2 = registers[src_index2];
     lo = src1;
     Log::Debug(
         "PC: %08X  % 6d    "
@@ -2209,7 +2195,6 @@ void MipsEmulator::j_j(uint offset) {
     );
 
     // Execute the next instruction before making the jump because MIPS
-    //pc += 4;
     num_executed++;
     uint opcode = *(uint*)(ram + pc + 4);
     ProcessOpcode(opcode);
@@ -2232,7 +2217,6 @@ void MipsEmulator::j_jal(uint offset) {
     );
 
     // Execute the next instruction before making the jump because MIPS
-    //pc += 4;
     num_executed++;
     uint opcode = *(uint*)(ram + pc + 4);
     ProcessOpcode(opcode);

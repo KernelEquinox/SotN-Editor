@@ -35,13 +35,26 @@ typedef struct SpritePart {
 
 
 
+// A placeholder sprite for later processing
+typedef struct NullSpritePart {
+    ushort idx = 0;
+    short offset_x = 0;
+    short offset_y = 0;
+} NullSpritePart;
+
+
+
 // Class for general utilities
 class Sprite {
 
 	public:
 
+        // Type of sprite being processed
+        bool is_null = false;
+
         // Vector of sprite parts
 		std::vector<SpritePart> parts;
+        std::vector<NullSpritePart> null_parts;
 
         // Address of the sprite data
         uint address = 0;

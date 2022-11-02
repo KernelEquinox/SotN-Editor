@@ -32,6 +32,12 @@ class Map {
 
     public:
 
+        // Whether the map has been loaded or not
+        bool loaded;
+
+        // Current loading status of the map to display to the user
+        std::string load_status_msg;
+
         // Name of the map
         std::string map_id;
 
@@ -85,6 +91,10 @@ class Map {
 
         // Map of tile data objects to prevent unnecessary allocations
         std::map<uint, TileData> tile_data_pointers;
+
+        // Dimensions
+        uint width;
+        uint height;
 
 
 

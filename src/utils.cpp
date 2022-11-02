@@ -1,9 +1,10 @@
 #include <stdlib.h>
 #include <stdio.h>
-#define GLEW_STATIC
 #include <GL/glew.h>
 #include <string>
 #include <string.h>
+#include <stdexcept>
+#include <cstdarg>
 #if defined(IMGUI_IMPL_OPENGL_ES2)
 #include <GLES2/gl2.h>
 #endif
@@ -344,7 +345,6 @@ byte* Utils::GetPixels(const GLuint texture, uint x, uint y, uint width, uint he
 
 
 
-// Helper function to set a range of pixels for a given texture
 /**
  * Writes RGBA pixels to a texture.
  *
@@ -455,7 +455,6 @@ void Utils::FindReplace(std::string* str, const std::string& find, const std::st
 
 
 
-// Convert a string with SJIS chars into an ASCII string
 /**
  * Converts a string with Shift-JIS characters into an ASCII string.
  *
@@ -481,4 +480,71 @@ void Utils::SJIS_to_ASCII(std::string* str) {
 
     bytes[str->length() - replaced] = 0;
     str->assign((char*)bytes);
+}
+
+
+
+/**
+ * Formats a string for inclusion in output functionality.
+ *
+ * @param fmt: Format string
+ * @param args: List of arguments to include in the output string
+ *
+ * @return Formatted string
+ *
+ * @throw invalid_argument: Thrown if the format arguments weren't able to be parsed.
+ *
+ * @note This is only for functions that already perform their own va_* management.
+ *
+ */
+std::string Utils::FormatStringArgs(const char* fmt, va_list args) {
+
+    // Get the size of the string
+    int len = vsnprintf(nullptr, 0, fmt, args) + 1;
+
+    // Check if length was invalid
+    if (len <= 0) {
+        va_end(args);
+        throw std::invalid_argument("ERROR: Couldn't parse format arguments.");
+    }
+
+    // Allocate a new char buffer
+    char* buf = (char*)calloc(len, sizeof(byte));
+
+    // Copy args to string
+    vsnprintf(buf, len, fmt, args);
+
+    // Create string from char buffer
+    std::string log_msg = std::string(buf);
+
+    // Free the allocated buffer
+    free(buf);
+
+    // Return the formatted string
+    return log_msg;
+}
+
+
+
+/**
+ * Parses a format string and returns the resultant value.
+ *
+ * @param fmt: Format string
+ * @param ...: List of arguments to include in the output string
+ *
+ * @return Formatted string
+ *
+ */
+std::string Utils::FormatString(const char* fmt, ...) {
+
+    // Create argument list
+    va_list args;
+    va_start(args, fmt);
+
+    // Parse format string with arguments
+    std::string output = Utils::FormatStringArgs(fmt, args);
+
+    // End arg list and return formatted string
+    va_end(args);
+    return output;
 }

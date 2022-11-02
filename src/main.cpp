@@ -4,9 +4,15 @@
 #include "imgui_impl_opengl3.h"
 #include <cstdio>
 #include <cstdlib>
-#include <algorithm>
 #include <filesystem>
 #include <functional>
+#include <thread>
+
+// Include this for MSVC since it doesn't like M_PI
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 #if defined(IMGUI_IMPL_OPENGL_ES2)
 #include <GLES2/gl2.h>
 #endif
@@ -52,20 +58,39 @@ std::string error;
 
 // Popup flags
 enum POPUP_FLAGS {
-    POPUP_NONE       =      0,
-    POPUP_HAS_OK     = 1 << 0,      // Shows an "OK" button to dismiss the popup
-    POPUP_EPHEMERAL  = 1 << 1,      // Used to temporarily display a status while a function is executing
-    POPUP_CLOSE      = 1 << 2       // Flags the popup to automatically close
+    PopupFlag_None       =      0,
+    PopupFlag_HasOK      = 1 << 0,      // Shows an "OK" button to dismiss the popup
+    PopupFlag_Ephemeral  = 1 << 1,      // Used to temporarily display a status while a function is executing
+    PopupFlag_Close      = 1 << 2       // Flags the popup to automatically close
 };
 
+// Popup status
+enum POPUP_STATUS {
+    PopupStatus_Init,                   // Initialize the popup to handle a callback
+    PopupStatus_Processing,             // Popup is currently processing a callback
+    PopupStatus_Finished                // Callback has finished running or doesn't exist
+};
+
+// Popup struct
 struct popup {
     std::string text;
-    POPUP_FLAGS flags = POPUP_NONE;
+    POPUP_FLAGS flags = PopupFlag_None;
+    POPUP_STATUS status = PopupStatus_Finished;
     std::function<void()> callback;
 } popup;
 
+// Viewport struct type
+typedef struct Viewport {
+    ImVec2 camera = ImVec2(0.0f, 0.0f);    // Drawing offset
+    float zoom = 1.0f;                           // Zoom amount
+} Viewport;
+
 // Vertex index
 static int vtx_idx;
+
+// Main window
+GLFWwindow* window;
+GLFWwindow* buffer_window;
 
 // Define globals
 byte* generic_rgba_cluts;
@@ -103,7 +128,6 @@ static void SotN_ReadLine(ImGuiContext* ctx, ImGuiSettingsHandler*, void*, const
     else if (sscanf(line, "GfxPath=%2047[^\n]", s) == 1)            { gfx_path = ImStrdup(s); }
 }
 
-// Write all lines of the settings file
 /**
  * Writes all lines to the SotN section of the imgui.ini file.
  */
@@ -147,16 +171,6 @@ static void blend_default(const ImDrawList* draw_list, const ImDrawCmd* cmd) {
 }
 
 
-
-//
-// Usage:
-//
-//     nfdfilteritem_t filters[2] = {
-//         { "Map files", "bin" },
-//         { "Texture files", "tim" }
-//     };
-//     nfdchar_t open_file(filters);
-//
 
 /**
  * Prompts the user to select a file from their filesystem.
@@ -423,6 +437,13 @@ void load_sotn_data() {
  *
  */
 void load_map_data(const std::filesystem::path& map_path) {
+    // Reset map loaded flag
+    map.loaded = false;
+    map.load_status_msg = "Starting ...";
+
+    // Swap to the buffer context
+    glfwMakeContextCurrent(buffer_window);
+
     std::string map_dir = map_path.parent_path().string();
     std::string map_filename = map_path.filename().string();
     std::string map_gfx_file = map_dir + "/F_" + map_filename;
@@ -435,30 +456,38 @@ void load_map_data(const std::filesystem::path& map_path) {
 
         // Initialize the emulator
         if (MipsEmulator::initialized) {
+            map.load_status_msg = "Cleaning Up ...";
             map.Cleanup();
         }
         else {
+            map.load_status_msg = "Initializing MIPS Emulator ...";
             MipsEmulator::Initialize();
             // Initialize the graphics data, populate MIPS RAM, etc.
+            map.load_status_msg = "Loading SotN Data ...";
             load_sotn_data();
         }
 
         // Load and process the map file
+        map.load_status_msg = "Loading Map File Data ...";
         map.LoadMapFile(map_path.string().c_str());
 
         // Load the map file itself into memory
+        map.load_status_msg = "Loading Map File Into MIPS RAM ...";
         MipsEmulator::LoadMapFile(map_path.string().c_str());
 
         // Load the map graphics
+        map.load_status_msg = "Loading Map Graphics ...";
         map.LoadMapGraphics(map_gfx_file.c_str());
 
 
         // Store map tile CLUTs in MIPS RAM
+        map.load_status_msg = "Storing Map CLUTs ...";
         for (int i = 0; i < 256; i++) {
             MipsEmulator::StoreMapCLUT(i * 32, 32, map.map_tile_cluts[i]);
         }
 
         // Store map entity CLUTs in MIPS RAM
+        map.load_status_msg = "Storing Entity CLUTs ...";
         for (int i = 0; i < map.entity_cluts.size(); i++) {
 
             // Get the current entity CLUT data
@@ -469,6 +498,7 @@ void load_map_data(const std::filesystem::path& map_path) {
         }
 
         // Load the map entities
+        map.load_status_msg = "Loading Entities ...";
         map.LoadMapEntities();
 
         // Clear out any errors
@@ -477,6 +507,110 @@ void load_map_data(const std::filesystem::path& map_path) {
     else {
         error = "Could not find graphics file (F_" + map_filename + ").";
     }
+
+
+
+
+    // Minimum starting coordinates
+    uint x_min = 42069;
+    uint y_min = 42069;
+    uint x_max = 0;
+    uint y_max = 0;
+
+    // Unique entity identifier
+    uint entity_uuid = 0;
+
+    // Loop through each room
+    for (int i = 0; i < map.rooms.size(); i++) {
+
+        // Check if this was lower than the current minimum X/Y coords
+        if (map.rooms[i].x_start < x_min) {
+            x_min = map.rooms[i].x_start;
+        }
+        if (map.rooms[i].y_start < y_min) {
+            y_min = map.rooms[i].y_start;
+        }
+        if (map.rooms[i].x_start + map.rooms[i].width > x_max) {
+            x_max = map.rooms[i].x_start + map.rooms[i].width;
+        }
+        if (map.rooms[i].y_start + map.rooms[i].height > y_max) {
+            y_max = map.rooms[i].y_start + map.rooms[i].height;
+        }
+    }
+
+    // Map dimensions
+    map.width = (x_max - x_min) * 256;
+    map.height = (y_max - y_min) * 256;
+
+    // Tell the modal popup that the processing has finished
+    popup.status = PopupStatus_Finished;
+
+    // Signal that the map has finished loading
+    map.loaded = true;
+
+    map.load_status_msg = "Done!";
+    glfwMakeContextCurrent(nullptr);
+}
+
+
+/**
+ * Custom qsort() sorting function for the entity property list.
+ *
+ * @param lhs: Left-hand side of the comparison
+ * @param rhs: Right-hand side of the comparison
+ *
+ * @return Comparison result
+ *
+ */
+static int IMGUI_CDECL entity_sort_func(const void* lhs, const void* rhs) {
+
+    // Convert std::variant to a signed 64-bit value
+    struct ToLong {
+        long operator()(char value) { return ((long)value & 0xFF); }
+        long operator()(byte value) { return ((long)value & 0xFF); }
+        long operator()(short value) { return ((long)value & 0xFFFF); }
+        long operator()(ushort value) { return ((long)value & 0xFFFF); }
+        long operator()(int value) { return ((long)value & 0xFFFFFFFF); }
+        long operator()(uint value) { return ((long)value & 0xFFFFFFFF); }
+    };
+
+    // Get sorting data
+    static const ImGuiTableSortSpecs* s_current_sort_specs = ImGui::TableGetSortSpecs();
+    const EntityDataEntry* a = (const EntityDataEntry*)lhs;
+    const EntityDataEntry* b = (const EntityDataEntry*)rhs;
+
+    // Check which columns are being sorted
+    for (int i = 0; i < s_current_sort_specs->SpecsCount; i++) {
+        const ImGuiTableColumnSortSpecs* sort_spec = &s_current_sort_specs->Specs[i];
+        long delta = 0;
+
+        // Execute sorting logic based on column being processed
+        switch (sort_spec->ColumnIndex) {
+            case 0:
+            case 1:
+                delta = ((long)a->offset - (long)b->offset);
+                break;
+            case 2:
+                delta = (strcmp(a->name.c_str(), b->name.c_str()));
+                break;
+            case 3:
+            case 4:
+                delta = (std::visit(ToLong{}, a->value) - std::visit(ToLong{}, b->value));
+                break;
+            default:
+                IM_ASSERT(0);
+                break;
+        }
+        if (delta > 0) {
+            return (sort_spec->SortDirection == ImGuiSortDirection_Ascending) ? +1 : -1;
+        }
+        if (delta < 0) {
+            return (sort_spec->SortDirection == ImGuiSortDirection_Ascending) ? -1 : +1;
+        }
+    }
+
+    // Default differentiation function
+    return (a->offset - b->offset);
 }
 
 
@@ -517,7 +651,7 @@ int main(int, char**)
 #endif
 
     // Create window with graphics context
-    GLFWwindow* window = glfwCreateWindow(1280, 720, "SotN Editor", nullptr, nullptr);
+    window = glfwCreateWindow(1280, 720, "SotN Editor", nullptr, nullptr);
     if (window == nullptr)
         return 1;
 
@@ -586,14 +720,12 @@ int main(int, char**)
     // Flag whether program should exit
     static bool exit = false;
 
-    // Zoom size
-    static float zoom_amount = 1;
-
     // Currently-selected entity in the Main Viewport
     static Entity* selected_entity;
 
-    // Main viewport drawing offset
-    static ImVec2 camera(0.0f, 0.0f);
+    // Define viewports
+    static Viewport main_view;
+    static Viewport vram_view;
 
     // Uncomment to enable debug logging to stdout
     //Log::level = LOG_DEBUG;
@@ -661,10 +793,11 @@ int main(int, char**)
 
                         // Set a status popup
                         popup.text = "Loading map data for [" + map_path.filename().string() + "] ...";
-                        popup.flags = POPUP_EPHEMERAL;
+                        popup.flags = PopupFlag_Ephemeral;
 
                         // Set the map loading function as a callback to the status popup
                         popup.callback = [map_path] { return load_map_data(map_path); };
+                        popup.status = PopupStatus_Init;
                     }
                 }
 
@@ -706,7 +839,7 @@ int main(int, char**)
 
         // Get the center of the viewport
         ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-        ImGuiWindowFlags modal_flags = ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings;
+        ImGuiWindowFlags modal_flags = ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove;
 
         // Center the PSX prompt
         ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
@@ -923,7 +1056,6 @@ int main(int, char**)
 
 // -- Properties -----------------------------------------------------------------------------------------------
 
-        //ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
         if (ImGui::Begin("Properties")) {
 
             if (!map.map_id.empty()) {
@@ -947,538 +1079,200 @@ int main(int, char**)
                     }
                     ImGui::Text("Entity ID: %04X", selected_entity->id);
                     ImGui::Text("Entity Slot: %04X", selected_entity->slot);
+                    ImGui::Text("Entity Address: %08X", selected_entity->address + RAM_BASE_OFFSET);
                     ImGui::Text("Sprite Address: %08X", selected_entity->sprite_address + MAP_BIN_OFFSET);
-                    static ImGuiTableFlags table_flags = ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV | ImGuiTableFlags_ContextMenuInBody;
-                    if (ImGui::BeginTable("Entity Data", 5, table_flags)) {
-                        uint cur_offset = 0;
 
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("pos_x_accel");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.pos_x_accel);
-                        ImGui::TableNextColumn(); ImGui::Text("%hd", selected_entity->data.pos_x_accel);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("pos_x");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.pos_x);
-                        ImGui::TableNextColumn(); ImGui::Text("%hd", selected_entity->data.pos_x);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("pos_y_accel");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.pos_y_accel);
-                        ImGui::TableNextColumn(); ImGui::Text("%hd", selected_entity->data.pos_y_accel);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("pos_y");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.pos_y);
-                        ImGui::TableNextColumn(); ImGui::Text("%hd", selected_entity->data.pos_y);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 4;
-                        ImGui::TableNextColumn(); ImGui::Text("acceleration_x");
-                        ImGui::TableNextColumn(); ImGui::Text("%08X", selected_entity->data.acceleration_x);
-                        ImGui::TableNextColumn(); ImGui::Text("%d", selected_entity->data.acceleration_x);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 4;
-                        ImGui::TableNextColumn(); ImGui::Text("acceleration_y");
-                        ImGui::TableNextColumn(); ImGui::Text("%08X", selected_entity->data.acceleration_y);
-                        ImGui::TableNextColumn(); ImGui::Text("%d", selected_entity->data.acceleration_y);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("offset_x");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.offset_x);
-                        ImGui::TableNextColumn(); ImGui::Text("%hd", selected_entity->data.offset_x);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("offset_y");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.offset_y);
-                        ImGui::TableNextColumn(); ImGui::Text("%hd", selected_entity->data.offset_y);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("facing");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.facing);
-                        ImGui::TableNextColumn(); ImGui::Text("%hu", selected_entity->data.facing);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("clut_index");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.clut_index);
-                        ImGui::TableNextColumn(); ImGui::Text("%hd", selected_entity->data.clut_index);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 1;
-                        ImGui::TableNextColumn(); ImGui::Text("blend_mode");
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", selected_entity->data.blend_mode);
-                        ImGui::TableNextColumn(); ImGui::Text("%hhd", selected_entity->data.blend_mode);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 1;
-                        ImGui::TableNextColumn(); ImGui::Text("color_flags");
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", selected_entity->data.color_flags);
-                        ImGui::TableNextColumn(); ImGui::Text("%hhd", selected_entity->data.color_flags);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("fx_width");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.fx_width);
-                        ImGui::TableNextColumn(); ImGui::Text("%hd", selected_entity->data.fx_width);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("fx_height");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.fx_height);
-                        ImGui::TableNextColumn(); ImGui::Text("%hd", selected_entity->data.fx_height);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("fx_timer");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.fx_timer);
-                        ImGui::TableNextColumn(); ImGui::Text("%hd", selected_entity->data.fx_timer);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("fx_coord_x");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.fx_coord_x);
-                        ImGui::TableNextColumn(); ImGui::Text("%hd", selected_entity->data.fx_coord_x);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("fx_coord_y");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.fx_coord_y);
-                        ImGui::TableNextColumn(); ImGui::Text("%hd", selected_entity->data.fx_coord_y);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("z_depth");
-                        ImGui::TableNextColumn(); ImGui::Text("%04hX", selected_entity->data.z_depth);
-                        ImGui::TableNextColumn(); ImGui::Text("%hd", selected_entity->data.z_depth);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("object_id");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.object_id);
-                        ImGui::TableNextColumn(); ImGui::Text("%hu", selected_entity->data.object_id);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 4;
-                        ImGui::TableNextColumn(); ImGui::Text("update_function");
-                        ImGui::TableNextColumn(); ImGui::Text("%08X", selected_entity->data.update_function);
-                        ImGui::TableNextColumn(); ImGui::Text("%u", selected_entity->data.update_function);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("current_state");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.current_state);
-                        ImGui::TableNextColumn(); ImGui::Text("%hu", selected_entity->data.current_state);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("current_substate");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.current_substate);
-                        ImGui::TableNextColumn(); ImGui::Text("%hd", selected_entity->data.current_substate);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("initial_state");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.initial_state);
-                        ImGui::TableNextColumn(); ImGui::Text("%hu", selected_entity->data.initial_state);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("room_slot");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.room_slot);
-                        ImGui::TableNextColumn(); ImGui::Text("%hu", selected_entity->data.room_slot);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 4;
-                        ImGui::TableNextColumn(); ImGui::Text("unk34");
-                        ImGui::TableNextColumn(); ImGui::Text("%08X", selected_entity->data.unk34);
-                        ImGui::TableNextColumn(); ImGui::Text("%d", selected_entity->data.unk34);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("unk38");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.unk38);
-                        ImGui::TableNextColumn(); ImGui::Text("%hd", selected_entity->data.unk38);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("info_idx");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.info_idx);
-                        ImGui::TableNextColumn(); ImGui::Text("%hd", selected_entity->data.info_idx);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("unk3C");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.unk3C);
-                        ImGui::TableNextColumn(); ImGui::Text("%hd", selected_entity->data.unk3C);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("hit_points");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.hit_points);
-                        ImGui::TableNextColumn(); ImGui::Text("%hd", selected_entity->data.hit_points);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("attack_damage");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.attack_damage);
-                        ImGui::TableNextColumn(); ImGui::Text("%hd", selected_entity->data.attack_damage);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("damage_type");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.damage_type);
-                        ImGui::TableNextColumn(); ImGui::Text("%hd", selected_entity->data.damage_type);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("unk44");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.unk44);
-                        ImGui::TableNextColumn(); ImGui::Text("%hu", selected_entity->data.unk44);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 1;
-                        ImGui::TableNextColumn(); ImGui::Text("hitbox_width");
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", selected_entity->data.hitbox_width);
-                        ImGui::TableNextColumn(); ImGui::Text("%hhu", selected_entity->data.hitbox_width);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 1;
-                        ImGui::TableNextColumn(); ImGui::Text("hitbox_height");
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", selected_entity->data.hitbox_height);
-                        ImGui::TableNextColumn(); ImGui::Text("%hhu", selected_entity->data.hitbox_height);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 1;
-                        ImGui::TableNextColumn(); ImGui::Text("unk48");
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", selected_entity->data.unk48);
-                        ImGui::TableNextColumn(); ImGui::Text("%hhu", selected_entity->data.unk48);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 1;
-                        ImGui::TableNextColumn(); ImGui::Text("unk49");
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", selected_entity->data.unk49);
-                        ImGui::TableNextColumn(); ImGui::Text("%hhu", selected_entity->data.unk49);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("unk4A");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.unk4A);
-                        ImGui::TableNextColumn(); ImGui::Text("%hd", selected_entity->data.unk4A);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 4;
-                        ImGui::TableNextColumn(); ImGui::Text("unk4C");
-                        ImGui::TableNextColumn(); ImGui::Text("%08X", selected_entity->data.unk4C);
-                        ImGui::TableNextColumn(); ImGui::Text("%d", selected_entity->data.unk4C);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("frame_index");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.frame_index);
-                        ImGui::TableNextColumn(); ImGui::Text("%hu", selected_entity->data.frame_index);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("frame_duration");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.frame_duration);
-                        ImGui::TableNextColumn(); ImGui::Text("%hu", selected_entity->data.frame_duration);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("sprite_bank");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.sprite_bank);
-                        ImGui::TableNextColumn(); ImGui::Text("%hu", selected_entity->data.sprite_bank);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("sprite_image");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.sprite_image);
-                        ImGui::TableNextColumn(); ImGui::Text("%hu", selected_entity->data.sprite_image);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("unk58");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.unk58);
-                        ImGui::TableNextColumn(); ImGui::Text("%hd", selected_entity->data.unk58);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("tileset");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.tileset);
-                        ImGui::TableNextColumn(); ImGui::Text("%hu", selected_entity->data.tileset);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 4;
-                        ImGui::TableNextColumn(); ImGui::Text("unk5C");
-                        ImGui::TableNextColumn(); ImGui::Text("%08X", selected_entity->data.unk5C);
-                        ImGui::TableNextColumn(); ImGui::Text("%d", selected_entity->data.unk5C);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 4;
-                        ImGui::TableNextColumn(); ImGui::Text("unk60");
-                        ImGui::TableNextColumn(); ImGui::Text("%08X", selected_entity->data.unk60);
-                        ImGui::TableNextColumn(); ImGui::Text("%d", selected_entity->data.unk60);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 4;
-                        ImGui::TableNextColumn(); ImGui::Text("polygt4_id");
-                        ImGui::TableNextColumn(); ImGui::Text("%08X", selected_entity->data.polygt4_id);
-                        ImGui::TableNextColumn(); ImGui::Text("%d", selected_entity->data.polygt4_id);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("unk68");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.unk68);
-                        ImGui::TableNextColumn(); ImGui::Text("%hd", selected_entity->data.unk68);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("unk6A");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.unk6A);
-                        ImGui::TableNextColumn(); ImGui::Text("%hd", selected_entity->data.unk6A);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 1;
-                        ImGui::TableNextColumn(); ImGui::Text("unk6C");
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", selected_entity->data.unk6C);
-                        ImGui::TableNextColumn(); ImGui::Text("%hhu", selected_entity->data.unk6C);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 1;
-                        ImGui::TableNextColumn(); ImGui::Text("unk6D");
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", selected_entity->data.unk6D);
-                        ImGui::TableNextColumn(); ImGui::Text("%hhd", selected_entity->data.unk6D);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("unk6E");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.unk6E);
-                        ImGui::TableNextColumn(); ImGui::Text("%hd", selected_entity->data.unk6E);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 4;
-                        ImGui::TableNextColumn(); ImGui::Text("unk70");
-                        ImGui::TableNextColumn(); ImGui::Text("%08X", selected_entity->data.unk70);
-                        ImGui::TableNextColumn(); ImGui::Text("%d", selected_entity->data.unk70);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 4;
-                        ImGui::TableNextColumn(); ImGui::Text("unk74");
-                        ImGui::TableNextColumn(); ImGui::Text("%08X", selected_entity->data.unk74);
-                        ImGui::TableNextColumn(); ImGui::Text("%d", selected_entity->data.unk74);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 4;
-                        ImGui::TableNextColumn(); ImGui::Text("unk78");
-                        ImGui::TableNextColumn(); ImGui::Text("%08X", selected_entity->data.unk78);
-                        ImGui::TableNextColumn(); ImGui::Text("%d", selected_entity->data.unk78);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 4;
-                        ImGui::TableNextColumn(); ImGui::Text("unk7C");
-                        ImGui::TableNextColumn(); ImGui::Text("%08X", selected_entity->data.unk7C);
-                        ImGui::TableNextColumn(); ImGui::Text("%d", selected_entity->data.unk7C);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("unk80");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.unk80);
-                        ImGui::TableNextColumn(); ImGui::Text("%hd", selected_entity->data.unk80);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("unk82");
-                        ImGui::TableNextColumn(); ImGui::Text("%04hX", selected_entity->data.unk82);
-                        ImGui::TableNextColumn(); ImGui::Text("%hd", selected_entity->data.unk82);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("unk84");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.unk84);
-                        ImGui::TableNextColumn(); ImGui::Text("%hd", selected_entity->data.unk84);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("unk86");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.unk86);
-                        ImGui::TableNextColumn(); ImGui::Text("%hd", selected_entity->data.unk86);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("unk88");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.unk88);
-                        ImGui::TableNextColumn(); ImGui::Text("%hu", selected_entity->data.unk88);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("unk8A");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.unk8A);
-                        ImGui::TableNextColumn(); ImGui::Text("%hu", selected_entity->data.unk8A);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("unk8C");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.unk8C);
-                        ImGui::TableNextColumn(); ImGui::Text("%hu", selected_entity->data.unk8C);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 2;
-                        ImGui::TableNextColumn(); ImGui::Text("unk8E");
-                        ImGui::TableNextColumn(); ImGui::Text("%04X", selected_entity->data.unk8E);
-                        ImGui::TableNextColumn(); ImGui::Text("%hu", selected_entity->data.unk8E);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 4;
-                        ImGui::TableNextColumn(); ImGui::Text("unk90");
-                        ImGui::TableNextColumn(); ImGui::Text("%08X", selected_entity->data.unk90);
-                        ImGui::TableNextColumn(); ImGui::Text("%d", selected_entity->data.unk90);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 4;
-                        ImGui::TableNextColumn(); ImGui::Text("unk94");
-                        ImGui::TableNextColumn(); ImGui::Text("%08X", selected_entity->data.unk94);
-                        ImGui::TableNextColumn(); ImGui::Text("%d", selected_entity->data.unk94);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 4;
-                        ImGui::TableNextColumn(); ImGui::Text("unk98");
-                        ImGui::TableNextColumn(); ImGui::Text("%08X", selected_entity->data.unk98);
-                        ImGui::TableNextColumn(); ImGui::Text("%d", selected_entity->data.unk98);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 4;
-                        ImGui::TableNextColumn(); ImGui::Text("unk9C");
-                        ImGui::TableNextColumn(); ImGui::Text("%08X", selected_entity->data.unk9C);
-                        ImGui::TableNextColumn(); ImGui::Text("%d", selected_entity->data.unk9C);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 4;
-                        ImGui::TableNextColumn(); ImGui::Text("unkA0");
-                        ImGui::TableNextColumn(); ImGui::Text("%08X", selected_entity->data.unkA0);
-                        ImGui::TableNextColumn(); ImGui::Text("%d", selected_entity->data.unkA0);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 4;
-                        ImGui::TableNextColumn(); ImGui::Text("unkA4");
-                        ImGui::TableNextColumn(); ImGui::Text("%08X", selected_entity->data.unkA4);
-                        ImGui::TableNextColumn(); ImGui::Text("%d", selected_entity->data.unkA4);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 4;
-                        ImGui::TableNextColumn(); ImGui::Text("unkA8");
-                        ImGui::TableNextColumn(); ImGui::Text("%08X", selected_entity->data.unkA8);
-                        ImGui::TableNextColumn(); ImGui::Text("%d", selected_entity->data.unkA8);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 4;
-                        ImGui::TableNextColumn(); ImGui::Text("unkAC");
-                        ImGui::TableNextColumn(); ImGui::Text("%08X", selected_entity->data.unkAC);
-                        ImGui::TableNextColumn(); ImGui::Text("%d", selected_entity->data.unkAC);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 4;
-                        ImGui::TableNextColumn(); ImGui::Text("unkB0");
-                        ImGui::TableNextColumn(); ImGui::Text("%08X", selected_entity->data.unkB0);
-                        ImGui::TableNextColumn(); ImGui::Text("%d", selected_entity->data.unkB0);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 4;
-                        ImGui::TableNextColumn(); ImGui::Text("pickup_flag");
-                        ImGui::TableNextColumn(); ImGui::Text("%08X", selected_entity->data.pickup_flag);
-                        ImGui::TableNextColumn(); ImGui::Text("%d", selected_entity->data.pickup_flag);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn(); ImGui::Text("%d", cur_offset);
-                        ImGui::TableNextColumn(); ImGui::Text("%02X", cur_offset); cur_offset += 4;
-                        ImGui::TableNextColumn(); ImGui::Text("callback");
-                        ImGui::TableNextColumn(); ImGui::Text("%08X", selected_entity->data.callback);
-                        ImGui::TableNextColumn(); ImGui::Text("%d", selected_entity->data.callback);
-
+                    // Copy entity data to the clipboard
+                    if (ImGui::Button("Copy to clipboard")) {
+                        ImGui::LogToClipboard();
+
+                        // Convert data to JSON
+                        ImGui::LogText("{\n");
+                        if (!selected_entity->name.empty()) {
+                            ImGui::LogText("    \"name\": \"%s\",\n", selected_entity->name.c_str());
+                        }
+                        if (!selected_entity->desc.empty()) {
+                            ImGui::LogText("    \"desc\": \"%s\",\n", selected_entity->desc.c_str());
+                        }
+                        ImGui::LogText("    \"id\": %d,\n", selected_entity->id);
+                        ImGui::LogText("    \"slot\": %d,\n", selected_entity->slot);
+                        ImGui::LogText("    \"address\": %u,    // 0x%08X\n", selected_entity->address + RAM_BASE_OFFSET, selected_entity->address + RAM_BASE_OFFSET);
+
+                        ImGui::LogText("    \"data\": {\n");
+
+                        // Loop through each data map entry
+                        for (int i = 0; i < selected_entity->data_vec.size(); i++) {
+
+                            // Using "auto" so that "std::variant<...>" doesn't have to be typed out
+                            auto* entry = &selected_entity->data_vec[i];
+
+                            // Determine JSON data value and comment value
+                            std::string fmt_dec = "%";
+                            std::string fmt_hex;
+                            if (std::holds_alternative<char>(entry->value) || std::holds_alternative<byte>(entry->value)) {
+                                fmt_dec.append("hh");
+                                fmt_hex.append("0x%02hhX");
+                            }
+                            else if (std::holds_alternative<short>(entry->value) || std::holds_alternative<ushort>(entry->value)) {
+                                fmt_dec.append("h");
+                                fmt_hex.append("0x%04hX");
+                            }
+                            else {
+                                fmt_hex.append("0x%08X");
+                            }
+
+                            // Determine JSON data display type (signed vs. unsigned)
+                            if (std::is_signed<decltype(entry->value)>::value) {
+                                fmt_dec.append("d");
+                            }
+                            else {
+                                fmt_dec.append("u");
+                            }
+
+                            // Log the data map entry
+                            std::string json_line = "        \"%s\": " + fmt_dec;
+                            json_line.append(",    // " + fmt_hex + "\n");
+                            std::string output = Utils::FormatString(json_line.c_str(), entry->name.c_str(), entry->value, entry->value);
+                            ImGui::LogText("%s", output.c_str());
+                        }
+                        ImGui::LogText("    }\n");
+                        ImGui::LogText("}\n");
+
+                        ImGui::LogFinish();
                     }
-                    ImGui::EndTable();
+
+
+
+                    ImGuiTableFlags test_flags = (
+                        ImGuiTableFlags_NoSavedSettings |
+                        ImGuiTableFlags_Sortable |
+                        ImGuiTableFlags_BordersV |
+                        ImGuiTableFlags_BordersOuterV |
+                        ImGuiTableFlags_BordersInnerV |
+                        ImGuiTableFlags_BordersH |
+                        ImGuiTableFlags_BordersOuterH |
+                        ImGuiTableFlags_BordersInnerH |
+                        ImGuiTableFlags_SortMulti
+                    );
+                    static ImVector<int> selection;
+                    static bool data_needs_sort = false;
+                    static const ImGuiTableSortSpecs* s_current_sort_specs;
+
+
+
+                    if (ImGui::BeginTable("Entity Properties", 5, test_flags, ImVec2(0, 0), 0.0f)) {
+                        // Declare columns
+                        ImGui::TableSetupColumn("#",   ImGuiTableColumnFlags_DefaultSort | ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoHide, 0.0f, 0);
+                        ImGui::TableSetupColumn("#",   ImGuiTableColumnFlags_WidthFixed, 0.0f, 1);
+                        ImGui::TableSetupColumn("Name",           ImGuiTableColumnFlags_WidthFixed, 0.0f, 2);
+                        ImGui::TableSetupColumn("Value",    ImGuiTableColumnFlags_WidthFixed, 0.0f, 3);
+                        ImGui::TableSetupColumn("Value",    ImGuiTableColumnFlags_WidthFixed, 0.0f, 4);
+
+
+
+                        // Resort data if sorting method was changed
+                        ImGuiTableSortSpecs* sorts_specs = ImGui::TableGetSortSpecs();
+                        if (sorts_specs && sorts_specs->SpecsDirty) {
+                            data_needs_sort = true;
+                        }
+                        if (sorts_specs && data_needs_sort && selected_entity->data_vec.size() > 1) {
+                            qsort(&selected_entity->data_vec[0], (size_t)selected_entity->data_vec.size(), sizeof(selected_entity->data_vec[0]), entity_sort_func);
+                            sorts_specs->SpecsDirty = false;
+                        }
+                        data_needs_sort = false;
+
+                        // Show headers
+                        ImGui::TableHeadersRow();
+
+                        // Show data
+                        ImGui::PushButtonRepeat(true);
+
+                        // Utilize clipper for list (just in case for later)
+                        ImGuiListClipper clipper;
+                        clipper.Begin(selected_entity->data_vec.size());
+                        while (clipper.Step()) {
+
+                            // Loop through each property
+                            for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++) {
+
+                                // Get the current property
+                                auto* entry = &selected_entity->data_vec[i];
+                                std::string fmt_dec = "%";
+                                std::string fmt_hex;
+                                uint data_size = 0;
+                                if (std::holds_alternative<char>(entry->value) || std::holds_alternative<byte>(entry->value)) {
+                                    fmt_dec.append("hh");
+                                    fmt_hex.append("%02hhX");
+                                    data_size = 1;
+                                }
+                                else if (std::holds_alternative<short>(entry->value) || std::holds_alternative<ushort>(entry->value)) {
+                                    fmt_dec.append("h");
+                                    fmt_hex.append("%04hX");
+                                    data_size = 2;
+                                }
+                                else {
+                                    fmt_hex.append("%08X");
+                                    data_size = 4;
+                                }
+
+                                if (std::is_signed<decltype(entry->value)>::value) {
+                                    fmt_dec.append("d");
+                                }
+                                else {
+                                    fmt_dec.append("u");
+                                }
+
+                                // Format hex and dec strings
+                                std::string hex_val = Utils::FormatString(fmt_hex.c_str(), entry->value);
+                                std::string dec_val = Utils::FormatString(fmt_dec.c_str(), entry->value);
+
+                                const bool item_is_selected = selection.contains(entry->offset);
+                                ImGui::PushID(entry->offset);
+                                ImGui::TableNextRow(ImGuiTableRowFlags_None, 0.0f);
+
+                                // For the demo purpose we can select among different type of items submitted in the first column
+                                ImGui::TableSetColumnIndex(0);
+
+                                std::string label = Utils::FormatString("%d  ", entry->offset);
+
+                                ImGuiSelectableFlags selectable_flags = ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowItemOverlap;
+                                if (ImGui::Selectable(label.c_str(), item_is_selected, selectable_flags, ImVec2(0, 0))) {
+                                    if (ImGui::GetIO().KeyCtrl) {
+                                        if (item_is_selected) {
+                                            selection.find_erase_unsorted(entry->offset);
+                                        }
+                                        else {
+                                            selection.push_back(entry->offset);
+                                        }
+                                    }
+                                    else {
+                                        selection.clear();
+                                        selection.push_back(entry->offset);
+                                    }
+                                }
+
+                                if (ImGui::TableSetColumnIndex(1)) {
+                                    ImGui::Text("%02X  ", entry->offset);
+                                }
+
+                                if (ImGui::TableSetColumnIndex(2)) {
+                                    ImGui::Text("%s  ", entry->name.c_str());
+                                }
+
+                                if (ImGui::TableSetColumnIndex(3)) {
+                                    ImGui::Text("%s  ", hex_val.c_str());
+                                }
+
+                                if (ImGui::TableSetColumnIndex(4)) {
+                                    ImGui::Text("%s  ", dec_val.c_str());
+                                }
+
+                                ImGui::PopID();
+                            }
+                        }
+                        ImGui::PopButtonRepeat();
+                        ImGui::EndTable();
+                    }
                 }
 
                 // No entity was selected
@@ -1502,7 +1296,7 @@ int main(int, char**)
 
         if (ImGui::Begin("Main Viewport")) {
 
-            if (!map.map_id.empty()) {
+            if (map.loaded) {
 
                 // No padding for main scrolling viewport
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
@@ -1515,13 +1309,13 @@ int main(int, char**)
                     ImGui::InvisibleButton("##MainCanvas", ImGui::GetWindowSize());
                     if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left))
                     {
-                        camera.x += ImGui::GetIO().MouseDelta.x;
-                        camera.y += ImGui::GetIO().MouseDelta.y;
+                        main_view.camera.x += ImGui::GetIO().MouseDelta.x;
+                        main_view.camera.y += ImGui::GetIO().MouseDelta.y;
                     }
 
                     // Update offsets with scroll
-                    camera.x += io.MouseWheelH * 2;
-                    camera.y += io.MouseWheel * 2;
+                    main_view.camera.x += io.MouseWheelH * 2;
+                    main_view.camera.y += io.MouseWheel * 2;
 
                     ImGui::PopID();
 
@@ -1543,7 +1337,7 @@ int main(int, char**)
                     ImVec2 bak_pos = ImGui::GetCursorPos();
 
                     // Create an image at 0,0
-                    ImGui::SetCursorPos(ImVec2(camera.x, camera.y));
+                    ImGui::SetCursorPos(ImVec2(main_view.camera.x, main_view.camera.y));
 
 
 
@@ -1577,26 +1371,23 @@ int main(int, char**)
                         }
                     }
 
-                    // Map dimensions
-                    uint map_width = (x_max - x_min) * 256;
-                    uint map_height = (y_max - y_min) * 256;
 
 
-
+                    // Handle main viewport zooming functionality
                     if (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Equal)) {
-                        float x_ratio = camera.x / (map_width * zoom_amount);
-                        float y_ratio = camera.y / (map_height * zoom_amount);
-                        zoom_amount *= 2;
-                        camera.x = x_ratio * (map_width * zoom_amount) - (ImGui::GetWindowSize().x / 2);
-                        camera.y = y_ratio * (map_height * zoom_amount) - (ImGui::GetWindowSize().y / 2);
+                        float x_ratio = main_view.camera.x / (map.width * main_view.zoom);
+                        float y_ratio = main_view.camera.y / (map.height * main_view.zoom);
+                        main_view.zoom *= 2;
+                        main_view.camera.x = x_ratio * (map.width * main_view.zoom) - (ImGui::GetWindowSize().x / 2);
+                        main_view.camera.y = y_ratio * (map.height * main_view.zoom) - (ImGui::GetWindowSize().y / 2);
                     }
                     if (ImGui::IsKeyPressed(ImGuiKey_Minus)) {
                         // Get the current X/Y ratio
-                        float x_ratio = camera.x / (map_width * zoom_amount);
-                        float y_ratio = camera.y / (map_height * zoom_amount);
-                        zoom_amount /= 2;
-                        camera.x = x_ratio * (map_width * zoom_amount) + (ImGui::GetWindowSize().x / 4);
-                        camera.y = y_ratio * (map_height * zoom_amount) + (ImGui::GetWindowSize().y / 4);
+                        float x_ratio = main_view.camera.x / (map.width * main_view.zoom);
+                        float y_ratio = main_view.camera.y / (map.height * main_view.zoom);
+                        main_view.zoom /= 2;
+                        main_view.camera.x = x_ratio * (map.width * main_view.zoom) + (ImGui::GetWindowSize().x / 4);
+                        main_view.camera.y = y_ratio * (map.height * main_view.zoom) + (ImGui::GetWindowSize().y / 4);
                     }
 
                     // Don't space out the items
@@ -1614,10 +1405,10 @@ int main(int, char**)
                             continue;
                         }
 
-                        ImGui::SetCursorPos(ImVec2(camera.x, camera.y));
+                        ImGui::SetCursorPos(ImVec2(main_view.camera.x, main_view.camera.y));
 
-                        uint x_coord = (cur_room->x_start - x_min) * 256 * zoom_amount;
-                        uint y_coord = (cur_room->y_start - y_min) * 256 * zoom_amount;
+                        uint x_coord = (cur_room->x_start - x_min) * 256 * main_view.zoom;
+                        uint y_coord = (cur_room->y_start - y_min) * 256 * main_view.zoom;
 
                         for (auto const& layer : cur_room->bg_ordering_table) {
 
@@ -1632,8 +1423,8 @@ int main(int, char**)
                                 EntitySpritePart* cur_sprite = &sprites[p];
 
                                 // Get the X/Y coords
-                                float sprite_x = camera.x + x_coord + (cur_sprite->x * zoom_amount);
-                                float sprite_y = camera.y + y_coord + (cur_sprite->y * zoom_amount);
+                                float sprite_x = main_view.camera.x + x_coord + (cur_sprite->x * main_view.zoom);
+                                float sprite_y = main_view.camera.y + y_coord + (cur_sprite->y * main_view.zoom);
 
                                 // Set the cursor position to the target item
                                 ImGui::SetCursorPos(ImVec2(sprite_x, sprite_y));
@@ -1656,21 +1447,18 @@ int main(int, char**)
                                     }
                                 }
 
-                                float tmp_width = (float)cur_sprite->width * zoom_amount;
-                                float tmp_height = (float)cur_sprite->height * zoom_amount;
-
                                 // Draw the image
                                 ImGui::Image(
                                     (void*)(intptr_t)cur_sprite->texture,
-                                    ImVec2((float)cur_sprite->width * zoom_amount, (float)cur_sprite->height * zoom_amount),
+                                    ImVec2((float)cur_sprite->width * main_view.zoom, (float)cur_sprite->height * main_view.zoom),
                                     uv0, uv1
                                 );
                                 draw_list->AddCallback(blend_default, nullptr);
                             }
                         }
                         // Draw the actual background on top of everything below it
-                        ImGui::SetCursorPos(ImVec2(camera.x + (float)x_coord, camera.y + (float)y_coord));
-                        ImGui::Image((void*)(intptr_t)cur_room->bg_texture, ImVec2(cur_room->bg_layer.width * 16 * zoom_amount, cur_room->bg_layer.height * 16 * zoom_amount));
+                        ImGui::SetCursorPos(ImVec2(main_view.camera.x + (float)x_coord, main_view.camera.y + (float)y_coord));
+                        ImGui::Image((void*)(intptr_t)cur_room->bg_texture, ImVec2(cur_room->bg_layer.width * 16 * main_view.zoom, cur_room->bg_layer.height * 16 * main_view.zoom));
                     }
 
                     // Draw entities in between FG and BG
@@ -1681,10 +1469,10 @@ int main(int, char**)
                             continue;
                         }
 
-                        ImGui::SetCursorPos(ImVec2(camera.x, camera.y));
+                        ImGui::SetCursorPos(ImVec2(main_view.camera.x, main_view.camera.y));
 
-                        uint x_coord = (cur_room->x_start - x_min) * 256 * zoom_amount;
-                        uint y_coord = (cur_room->y_start - y_min) * 256 * zoom_amount;
+                        uint x_coord = (cur_room->x_start - x_min) * 256 * main_view.zoom;
+                        uint y_coord = (cur_room->y_start - y_min) * 256 * main_view.zoom;
 
                         for (auto const& layer : cur_room->mid_ordering_table) {
 
@@ -1699,8 +1487,8 @@ int main(int, char**)
                                 EntitySpritePart* cur_sprite = &sprites[p];
 
                                 // Get the X/Y coords
-                                float sprite_x = camera.x + x_coord + (cur_sprite->x * zoom_amount);
-                                float sprite_y = camera.y + y_coord + (cur_sprite->y * zoom_amount);
+                                float sprite_x = main_view.camera.x + x_coord + (cur_sprite->x * main_view.zoom);
+                                float sprite_y = main_view.camera.y + y_coord + (cur_sprite->y * main_view.zoom);
 
                                 // Set the cursor position to the target item
                                 ImGui::SetCursorPos(ImVec2(sprite_x, sprite_y));
@@ -1723,9 +1511,6 @@ int main(int, char**)
                                     }
                                 }
 
-                                float tmp_width = (float)cur_sprite->width * zoom_amount;
-                                float tmp_height = (float)cur_sprite->height * zoom_amount;
-
                                 // Check if image had a polygon
                                 if (cur_sprite->polygon.code > 0) {
 
@@ -1741,7 +1526,7 @@ int main(int, char**)
                                         ImVec2 clip_min = ImGui::GetWindowDrawList()->GetClipRectMin();
                                         ImGui::GetWindowDrawList()->AddRectFilledMultiColor(
                                             ImVec2(sprite_x + clip_min.x, sprite_y + clip_min.y),
-                                            ImVec2(sprite_x + (float)cur_sprite->width * zoom_amount + clip_min.x, sprite_y + (float)cur_sprite->height * zoom_amount + clip_min.y),
+                                            ImVec2(sprite_x + (float)cur_sprite->width * main_view.zoom + clip_min.x, sprite_y + (float)cur_sprite->height * main_view.zoom + clip_min.y),
                                             IM_COL32(255, 255, 255, 255),
                                             IM_COL32(255, 255, 255, 255),
                                             IM_COL32(255, 255, 255, 255),
@@ -1751,19 +1536,13 @@ int main(int, char**)
                                     else {
                                         ImGui::Image(
                                             (void*)(intptr_t)cur_sprite->texture,
-                                            ImVec2((float)cur_sprite->width * zoom_amount, (float)cur_sprite->height * zoom_amount),
+                                            ImVec2((float)cur_sprite->width * main_view.zoom, (float)cur_sprite->height * main_view.zoom),
                                             uv0, uv1
                                         );
                                     }
 
                                     auto& buf = ImGui::GetWindowDrawList()->VtxBuffer;
                                     if (vtx_idx < buf.Size) {
-                                        auto test1 = buf[vtx_idx + 0];
-                                        auto test2 = buf[vtx_idx + 1];
-                                        auto test3 = buf[vtx_idx + 2];
-                                        auto test4 = buf[vtx_idx + 3];
-
-
 
                                         // Check whether polygon should be opaque or semi-transparent
                                         uint alpha = 0xFF;
@@ -1794,23 +1573,53 @@ int main(int, char**)
                                                 buf[vtx_idx + 1].pos.y = buf[vtx_idx + 3].pos.y;
                                                 buf[vtx_idx + 3].pos.y = tmp_y;
                                             }
-                                            buf[vtx_idx + 0].pos.x += (cur_sprite->top_left.x * zoom_amount);
-                                            buf[vtx_idx + 0].pos.y += (cur_sprite->top_left.y * zoom_amount);
-                                            buf[vtx_idx + 1].pos.x += (cur_sprite->top_right.x * zoom_amount);
-                                            buf[vtx_idx + 1].pos.y += (cur_sprite->top_right.y * zoom_amount);
-                                            buf[vtx_idx + 2].pos.x += (cur_sprite->bottom_right.x * zoom_amount);
-                                            buf[vtx_idx + 2].pos.y += (cur_sprite->bottom_right.y * zoom_amount);
-                                            buf[vtx_idx + 3].pos.x += (cur_sprite->bottom_left.x * zoom_amount);
-                                            buf[vtx_idx + 3].pos.y += (cur_sprite->bottom_left.y * zoom_amount);
+                                            buf[vtx_idx + 0].pos.x += (cur_sprite->top_left.x * main_view.zoom);
+                                            buf[vtx_idx + 0].pos.y += (cur_sprite->top_left.y * main_view.zoom);
+                                            buf[vtx_idx + 1].pos.x += (cur_sprite->top_right.x * main_view.zoom);
+                                            buf[vtx_idx + 1].pos.y += (cur_sprite->top_right.y * main_view.zoom);
+                                            buf[vtx_idx + 2].pos.x += (cur_sprite->bottom_right.x * main_view.zoom);
+                                            buf[vtx_idx + 2].pos.y += (cur_sprite->bottom_right.y * main_view.zoom);
+                                            buf[vtx_idx + 3].pos.x += (cur_sprite->bottom_left.x * main_view.zoom);
+                                            buf[vtx_idx + 3].pos.y += (cur_sprite->bottom_left.y * main_view.zoom);
                                         }
                                     }
                                 }
                                 else {
                                     ImGui::Image(
                                         (void*)(intptr_t)cur_sprite->texture,
-                                        ImVec2((float)cur_sprite->width * zoom_amount, (float)cur_sprite->height * zoom_amount),
+                                        ImVec2((float)cur_sprite->width * main_view.zoom, (float)cur_sprite->height * main_view.zoom),
                                         uv0, uv1
                                     );
+                                }
+
+                                // Check for rotations
+                                if (cur_sprite->rotate) {
+                                    auto& buf = ImGui::GetWindowDrawList()->VtxBuffer;
+                                    if (vtx_idx < buf.Size) {
+
+                                        // Calculate rotation angle in radians
+                                        float rad = ((((float)cur_sprite->rotate / 4096.0f) * 360.0f) * (float)M_PI) / 180.0f;
+                                        float rot_sin = sinf(rad);
+                                        float rot_cos = cosf(rad);
+
+                                        // Calculate center point
+                                        ImVec2 pivot = ImVec2(
+                                            buf[vtx_idx].pos.x - (float)cur_sprite->offset_x * main_view.zoom,
+                                            buf[vtx_idx].pos.y - (float)cur_sprite->offset_y * main_view.zoom
+                                        );
+
+                                        // Determine pivot point
+                                        ImVec2 rel_pivot = ImRotate(pivot, rot_cos, rot_sin);
+                                        rel_pivot.x -= pivot.x;
+                                        rel_pivot.y -= pivot.y;
+
+                                        // Rotate vertex around pivot
+                                        for (int k = vtx_idx; k < buf.Size; k++) {
+                                            ImVec2 rot_val = ImRotate(buf[k].pos, rot_cos, rot_sin);
+                                            buf[k].pos.x = rot_val.x - rel_pivot.x;
+                                            buf[k].pos.y = rot_val.y - rel_pivot.y;
+                                        }
+                                    }
                                 }
                                 draw_list->AddCallback(blend_default, nullptr);
                             }
@@ -1825,13 +1634,13 @@ int main(int, char**)
                             continue;
                         }
 
-                        ImGui::SetCursorPos(ImVec2(camera.x, camera.y));
+                        ImGui::SetCursorPos(ImVec2(main_view.camera.x, main_view.camera.y));
 
-                        uint x_coord = (cur_room->x_start - x_min) * 256 * zoom_amount;
-                        uint y_coord = (cur_room->y_start - y_min) * 256 * zoom_amount;
+                        uint x_coord = (cur_room->x_start - x_min) * 256 * main_view.zoom;
+                        uint y_coord = (cur_room->y_start - y_min) * 256 * main_view.zoom;
 
-                        ImGui::SetCursorPos(ImVec2(camera.x + (float)x_coord, camera.y + (float)y_coord));
-                        ImGui::Image((void*)(intptr_t)cur_room->fg_texture, ImVec2(cur_room->fg_layer.width * 16 * zoom_amount, cur_room->fg_layer.height * 16 * zoom_amount));
+                        ImGui::SetCursorPos(ImVec2(main_view.camera.x + (float)x_coord, main_view.camera.y + (float)y_coord));
+                        ImGui::Image((void*)(intptr_t)cur_room->fg_texture, ImVec2(cur_room->fg_layer.width * 16 * main_view.zoom, cur_room->fg_layer.height * 16 * main_view.zoom));
 
                         for (auto const& layer : cur_room->fg_ordering_table) {
 
@@ -1846,8 +1655,8 @@ int main(int, char**)
                                 EntitySpritePart* cur_sprite = &sprites[p];
 
                                 // Get the X/Y coords
-                                float sprite_x = camera.x + x_coord + (cur_sprite->x * zoom_amount);
-                                float sprite_y = camera.y + y_coord + (cur_sprite->y * zoom_amount);
+                                float sprite_x = main_view.camera.x + x_coord + (cur_sprite->x * main_view.zoom);
+                                float sprite_y = main_view.camera.y + y_coord + (cur_sprite->y * main_view.zoom);
 
                                 // Set the cursor position to the target item
                                 ImGui::SetCursorPos(ImVec2(sprite_x, sprite_y));
@@ -1870,9 +1679,6 @@ int main(int, char**)
                                     }
                                 }
 
-                                float tmp_width = (float)cur_sprite->width * zoom_amount;
-                                float tmp_height = (float)cur_sprite->height * zoom_amount;
-
                                 // Check if image had a polygon
                                 if (cur_sprite->polygon.code > 0) {
 
@@ -1888,7 +1694,7 @@ int main(int, char**)
                                         ImVec2 clip_min = ImGui::GetWindowDrawList()->GetClipRectMin();
                                         ImGui::GetWindowDrawList()->AddRectFilledMultiColor(
                                             ImVec2(sprite_x + clip_min.x, sprite_y + clip_min.y),
-                                            ImVec2(sprite_x + (float)cur_sprite->width * zoom_amount + clip_min.x, sprite_y + (float)cur_sprite->height * zoom_amount + clip_min.y),
+                                            ImVec2(sprite_x + (float)cur_sprite->width * main_view.zoom + clip_min.x, sprite_y + (float)cur_sprite->height * main_view.zoom + clip_min.y),
                                             IM_COL32(255, 255, 255, 255),
                                             IM_COL32(255, 255, 255, 255),
                                             IM_COL32(255, 255, 255, 255),
@@ -1898,19 +1704,13 @@ int main(int, char**)
                                     else {
                                         ImGui::Image(
                                             (void*)(intptr_t)cur_sprite->texture,
-                                            ImVec2((float)cur_sprite->width * zoom_amount, (float)cur_sprite->height * zoom_amount),
+                                            ImVec2((float)cur_sprite->width * main_view.zoom, (float)cur_sprite->height * main_view.zoom),
                                             uv0, uv1
                                         );
                                     }
 
                                     auto& buf = ImGui::GetWindowDrawList()->VtxBuffer;
                                     if (vtx_idx < buf.Size) {
-                                        auto test1 = buf[vtx_idx + 0];
-                                        auto test2 = buf[vtx_idx + 1];
-                                        auto test3 = buf[vtx_idx + 2];
-                                        auto test4 = buf[vtx_idx + 3];
-
-
 
                                         // Check whether polygon should be opaque or semi-transparent
                                         uint alpha = 0xFF;
@@ -1941,24 +1741,55 @@ int main(int, char**)
                                                 buf[vtx_idx + 1].pos.y = buf[vtx_idx + 3].pos.y;
                                                 buf[vtx_idx + 3].pos.y = tmp_y;
                                             }
-                                            buf[vtx_idx + 0].pos.x += (cur_sprite->top_left.x * zoom_amount);
-                                            buf[vtx_idx + 0].pos.y += (cur_sprite->top_left.y * zoom_amount);
-                                            buf[vtx_idx + 1].pos.x += (cur_sprite->top_right.x * zoom_amount);
-                                            buf[vtx_idx + 1].pos.y += (cur_sprite->top_right.y * zoom_amount);
-                                            buf[vtx_idx + 2].pos.x += (cur_sprite->bottom_right.x * zoom_amount);
-                                            buf[vtx_idx + 2].pos.y += (cur_sprite->bottom_right.y * zoom_amount);
-                                            buf[vtx_idx + 3].pos.x += (cur_sprite->bottom_left.x * zoom_amount);
-                                            buf[vtx_idx + 3].pos.y += (cur_sprite->bottom_left.y * zoom_amount);
+                                            buf[vtx_idx + 0].pos.x += (cur_sprite->top_left.x * main_view.zoom);
+                                            buf[vtx_idx + 0].pos.y += (cur_sprite->top_left.y * main_view.zoom);
+                                            buf[vtx_idx + 1].pos.x += (cur_sprite->top_right.x * main_view.zoom);
+                                            buf[vtx_idx + 1].pos.y += (cur_sprite->top_right.y * main_view.zoom);
+                                            buf[vtx_idx + 2].pos.x += (cur_sprite->bottom_right.x * main_view.zoom);
+                                            buf[vtx_idx + 2].pos.y += (cur_sprite->bottom_right.y * main_view.zoom);
+                                            buf[vtx_idx + 3].pos.x += (cur_sprite->bottom_left.x * main_view.zoom);
+                                            buf[vtx_idx + 3].pos.y += (cur_sprite->bottom_left.y * main_view.zoom);
                                         }
                                     }
                                 }
                                 else {
                                     ImGui::Image(
                                         (void*)(intptr_t)cur_sprite->texture,
-                                        ImVec2((float)cur_sprite->width * zoom_amount, (float)cur_sprite->height * zoom_amount),
+                                        ImVec2((float)cur_sprite->width * main_view.zoom, (float)cur_sprite->height * main_view.zoom),
                                         uv0, uv1
                                     );
                                 }
+
+                                // Check for rotations
+                                if (cur_sprite->rotate) {
+                                    auto& buf = ImGui::GetWindowDrawList()->VtxBuffer;
+                                    if (vtx_idx < buf.Size) {
+
+                                        // Calculate rotation angle in radians
+                                        float rad = ((((float)cur_sprite->rotate / 4096.0f) * 360.0f) * (float)M_PI) / 180.0f;
+                                        float rot_sin = sinf(rad);
+                                        float rot_cos = cosf(rad);
+
+                                        // Calculate center point
+                                        ImVec2 pivot = ImVec2(
+                                            buf[vtx_idx].pos.x - (float)cur_sprite->offset_x * main_view.zoom,
+                                            buf[vtx_idx].pos.y - (float)cur_sprite->offset_y * main_view.zoom
+                                        );
+
+                                        // Determine pivot point
+                                        ImVec2 rel_pivot = ImRotate(pivot, rot_cos, rot_sin);
+                                        rel_pivot.x -= pivot.x;
+                                        rel_pivot.y -= pivot.y;
+
+                                        // Rotate vertex around pivot
+                                        for (int k = vtx_idx; k < buf.Size; k++) {
+                                            ImVec2 rot_val = ImRotate(buf[k].pos, rot_cos, rot_sin);
+                                            buf[k].pos.x = rot_val.x - rel_pivot.x;
+                                            buf[k].pos.y = rot_val.y - rel_pivot.y;
+                                        }
+                                    }
+                                }
+
                                 draw_list->AddCallback(blend_default, nullptr);
                             }
                         }
@@ -1984,8 +1815,8 @@ int main(int, char**)
                         }
 
                         // Get the current room's starting X/Y coords
-                        uint x_coord = (cur_room->x_start - x_min) * 256 * zoom_amount;
-                        uint y_coord = (cur_room->y_start - y_min) * 256 * zoom_amount;
+                        uint x_coord = (cur_room->x_start - x_min) * 256 * main_view.zoom;
+                        uint y_coord = (cur_room->y_start - y_min) * 256 * main_view.zoom;
 
                         // Use a magenta outline for the entity buttons
                         ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(255, 0, 255, 255));
@@ -2003,7 +1834,7 @@ int main(int, char**)
                         std::vector<EntityInitData> init_data_list = map.entity_layouts[entity_layout_id];
 
                         // Draw the room name
-                        ImGui::SetCursorPos(ImVec2(camera.x + x_coord, camera.y + y_coord));
+                        ImGui::SetCursorPos(ImVec2(main_view.camera.x + x_coord, main_view.camera.y + y_coord));
                         ImGui::Text("Room %d", i);
 
 
@@ -2017,14 +1848,14 @@ int main(int, char**)
                             Entity* entity = &cur_room->entities[k];
 
                             // Check if entity has a hitbox size
-                            float button_width = (entity->data.hitbox_width > 0 ? (float)entity->data.hitbox_width : 16.0f) * zoom_amount;
-                            float button_height = (entity->data.hitbox_height > 0 ? (float)entity->data.hitbox_height : 16.0f) * zoom_amount;
+                            float button_width = (entity->data.hitbox_width > 0 ? (float)entity->data.hitbox_width : 16.0f) * main_view.zoom;
+                            float button_height = (entity->data.hitbox_height > 0 ? (float)entity->data.hitbox_height : 16.0f) * main_view.zoom;
 
                             // Set the cursor position to the target item
                             ImGui::SetCursorPos(
                                 ImVec2(
-                                    camera.x + x_coord + (entity->data.pos_x * zoom_amount) - (button_width / 2),
-                                    camera.y + y_coord + (entity->data.pos_y * zoom_amount) - (button_height / 2)
+                                    main_view.camera.x + x_coord + (entity->data.pos_x * main_view.zoom) - (button_width / 2),
+                                    main_view.camera.y + y_coord + (entity->data.pos_y * main_view.zoom) - (button_height / 2)
                                 )
                             );
 
@@ -2042,8 +1873,13 @@ int main(int, char**)
                     }
 
 
+                    // Show zoom amount
                     ImGui::SetCursorPos(ImVec2(0, ImGui::GetWindowSize().y - 14));
-                    ImGui::Text("Zoom: %0.2f%%", zoom_amount * 100);
+                    ImGui::Text("Zoom: %0.2f%%", main_view.zoom * 100);
+
+                    // Show camera position
+                    ImGui::SetCursorPos(ImVec2(0, 0));
+                    ImGui::Text("Camera: (%0.0f, %0.0f)", -main_view.camera.x * (1 / main_view.zoom), -main_view.camera.y * (1 / main_view.zoom));
 
                     // Stop clipping area
                     ImGui::PopClipRect();
@@ -2071,13 +1907,10 @@ int main(int, char**)
 
         if (ImGui::Begin("VRAM Viewer")) {
 
-            if (!map.map_id.empty()) {
+            if (map.loaded) {
 
                 // No padding for main scrolling viewport
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-
-                // Current drawing offset
-                static ImVec2 offset(0.0f, 0.0f);
 
                 // Create a child window
                 if (ImGui::BeginChild("MainVRAMDisplay", ImVec2(0, 0), true, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
@@ -2087,13 +1920,13 @@ int main(int, char**)
                     ImGui::InvisibleButton("##VRAMCanvas", ImGui::GetWindowSize());
                     if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left))
                     {
-                        offset.x += ImGui::GetIO().MouseDelta.x;
-                        offset.y += ImGui::GetIO().MouseDelta.y;
+                        vram_view.camera.x += ImGui::GetIO().MouseDelta.x;
+                        vram_view.camera.y += ImGui::GetIO().MouseDelta.y;
                     }
 
                     // Update offsets with scroll
-                    offset.x += io.MouseWheelH * 2;
-                    offset.y += io.MouseWheel * 2;
+                    vram_view.camera.x += io.MouseWheelH * 2;
+                    vram_view.camera.y += io.MouseWheel * 2;
 
                     ImGui::PopID();
 
@@ -2114,72 +1947,100 @@ int main(int, char**)
                     // Get the current position of the cursor
                     ImVec2 cur_pos = ImGui::GetCursorPos();
 
+
+
+                    // Handle VRAM viewport zooming functionality (inaccurate)
+                    if (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Equal)) {
+                        float x_ratio = vram_view.camera.x / (map.width * vram_view.zoom);
+                        float y_ratio = vram_view.camera.y / (map.height * vram_view.zoom);
+                        vram_view.zoom *= 2;
+                        vram_view.camera.x = x_ratio * (map.width * vram_view.zoom) - (ImGui::GetWindowSize().x / 2);
+                        vram_view.camera.y = y_ratio * (map.height * vram_view.zoom) - (ImGui::GetWindowSize().y / 2);
+                    }
+                    if (ImGui::IsKeyPressed(ImGuiKey_Minus)) {
+                        // Get the current X/Y ratio
+                        float x_ratio = vram_view.camera.x / (map.width * vram_view.zoom);
+                        float y_ratio = vram_view.camera.y / (map.height * vram_view.zoom);
+                        vram_view.zoom /= 2;
+                        vram_view.camera.x = x_ratio * (map.width * vram_view.zoom) + (ImGui::GetWindowSize().x / 4);
+                        vram_view.camera.y = y_ratio * (map.height * vram_view.zoom) + (ImGui::GetWindowSize().y / 4);
+                    }
+
+
+
+
+
+
                     // Create an image at 0,0
-                    ImGui::SetCursorPos(ImVec2(offset.x, offset.y));
-
-
-
-
-
+                    ImGui::SetCursorPos(ImVec2(vram_view.camera.x, vram_view.camera.y));
 
                     // Make the text not do a weird thing
                     ImGui::Text("");
 
                     ImVec2 cursor_pos = ImGui::GetCursorPos();
-                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + offset.x, cursor_pos.y + 5));
+                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + vram_view.camera.x, cursor_pos.y + 5));
                     ImGui::Text("Map VRAM:");
 
                     cursor_pos = ImGui::GetCursorPos();
-                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + offset.x, cursor_pos.y));
-                    ImGui::Image((void*)(intptr_t)map.map_vram, ImVec2(512, 256));
+                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + vram_view.camera.x, cursor_pos.y));
+                    ImGui::Image((void*)(intptr_t)map.map_vram, ImVec2(512 * vram_view.zoom, 256 * vram_view.zoom));
 
                     cursor_pos = ImGui::GetCursorPos();
-                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + offset.x, cursor_pos.y + 5));
+                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + vram_view.camera.x, cursor_pos.y + 5));
                     ImGui::Text("Generic CLUTs:");
 
                     cursor_pos = ImGui::GetCursorPos();
-                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + offset.x, cursor_pos.y));
-                    ImGui::Image((void*)(intptr_t)generic_cluts_texture, ImVec2(256, 16));
+                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + vram_view.camera.x, cursor_pos.y));
+                    ImGui::Image((void*)(intptr_t)generic_cluts_texture, ImVec2(256 * vram_view.zoom, 16 * vram_view.zoom));
 
                     cursor_pos = ImGui::GetCursorPos();
-                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + offset.x, cursor_pos.y + 5));
+                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + vram_view.camera.x, cursor_pos.y + 5));
                     ImGui::Text("Item CLUTs:");
 
                     cursor_pos = ImGui::GetCursorPos();
-                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + offset.x, cursor_pos.y));
-                    ImGui::Image((void*)(intptr_t)item_cluts_texture, ImVec2(320, 16));
+                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + vram_view.camera.x, cursor_pos.y));
+                    ImGui::Image((void*)(intptr_t)item_cluts_texture, ImVec2(320 * vram_view.zoom, 16 * vram_view.zoom));
 
                     cursor_pos = ImGui::GetCursorPos();
-                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + offset.x, cursor_pos.y + 5));
+                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + vram_view.camera.x, cursor_pos.y + 5));
                     ImGui::Text("Tileset 7:");
 
                     cursor_pos = ImGui::GetCursorPos();
-                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + offset.x, cursor_pos.y));
-                    ImGui::Image((void*)(intptr_t)map.map_tilesets[7], ImVec2(64, 256));
+                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + vram_view.camera.x, cursor_pos.y));
+                    ImGui::Image((void*)(intptr_t)map.map_tilesets[7], ImVec2(64 * vram_view.zoom, 256 * vram_view.zoom));
 
                     cursor_pos = ImGui::GetCursorPos();
-                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + offset.x, cursor_pos.y + 5));
+                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + vram_view.camera.x, cursor_pos.y + 5));
                     ImGui::Text("F_GAME.BIN VRAM Texture:");
 
                     cursor_pos = ImGui::GetCursorPos();
-                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + offset.x, cursor_pos.y));
-                    ImGui::Image((void*)(intptr_t)fgame_texture, ImVec2(512, 256));
+                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + vram_view.camera.x, cursor_pos.y));
+                    ImGui::Image((void*)(intptr_t)fgame_texture, ImVec2(512 * vram_view.zoom, 256 * vram_view.zoom));
 
                     cursor_pos = ImGui::GetCursorPos();
-                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + offset.x, cursor_pos.y + 5));
+                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + vram_view.camera.x, cursor_pos.y + 5));
                     ImGui::Text("F_GAME.BIN Texture 7:");
 
                     cursor_pos = ImGui::GetCursorPos();
-                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + offset.x, cursor_pos.y));
-                    ImGui::Image((void*)(intptr_t)fgame_textures[7], ImVec2(64, 256));
+                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + vram_view.camera.x, cursor_pos.y));
+                    ImGui::Image((void*)(intptr_t)fgame_textures[7], ImVec2(64 * vram_view.zoom, 256 * vram_view.zoom));
 
                     cursor_pos = ImGui::GetCursorPos();
-                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + offset.x, cursor_pos.y + 5));
+                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + vram_view.camera.x, cursor_pos.y + 5));
                     ImGui::Text("MIPS Framebuffer:");
 
                     cursor_pos = ImGui::GetCursorPos();
-                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + offset.x, cursor_pos.y));
-                    ImGui::Image((void*)(intptr_t)MipsEmulator::framebuffer, ImVec2(1024, 512));
+                    ImGui::SetCursorPos(ImVec2(cursor_pos.x + vram_view.camera.x, cursor_pos.y));
+                    ImGui::Image((void*)(intptr_t)MipsEmulator::framebuffer, ImVec2(1024 * vram_view.zoom, 512 * vram_view.zoom));
+
+
+                    // Show zoom amount
+                    ImGui::SetCursorPos(ImVec2(0, ImGui::GetWindowSize().y - 14));
+                    ImGui::Text("Zoom: %0.2f%%", vram_view.zoom * 100);
+
+                    // Show camera position
+                    ImGui::SetCursorPos(ImVec2(0, 0));
+                    ImGui::Text("Camera: (%0.0f, %0.0f)", -vram_view.camera.x * (1 / vram_view.zoom), -vram_view.camera.y * (1 / vram_view.zoom));
 
 
                     // Restore position
@@ -2229,45 +2090,65 @@ int main(int, char**)
 
                 ImGui::Text("%s", popup.text.c_str());
 
+                // Check if this is the map being loaded
+                if (!map.loaded) {
+                    ImGui::Text("* %s", map.load_status_msg.c_str());
+                }
+
                 // Show an OK button to close the popup
-                if ((popup.flags | POPUP_HAS_OK) == POPUP_HAS_OK) {
+                if ((popup.flags | PopupFlag_HasOK) == PopupFlag_HasOK) {
                     ImGui::Separator();
                     if (ImGui::Button("OK", ImVec2(120, 0))) {
                         ImGui::CloseCurrentPopup();
                         popup.text.clear();
-                        popup.flags = POPUP_NONE;
+                        popup.flags = PopupFlag_None;
                     }
                 }
 
                 // Close the popup on the next frame
-                else if ((popup.flags | POPUP_EPHEMERAL) == POPUP_EPHEMERAL) {
+                else if ((popup.flags | PopupFlag_Ephemeral) == PopupFlag_Ephemeral) {
 
                     // Wait until the popup is visible before flagging it to close
                     ImGuiWindow* win = ImGui::GetTopMostAndVisiblePopupModal();
                     if (win != nullptr) {
-                        popup.flags = POPUP_CLOSE;
+                        popup.flags = PopupFlag_Close;
                     }
                 }
 
                 // Close the popup
-                else if ((popup.flags | POPUP_CLOSE) == POPUP_CLOSE) {
+                else if ((popup.flags | PopupFlag_Close) == PopupFlag_Close) {
 
                     // Run any popup callbacks
-                    if (popup.callback != nullptr) {
-                        popup.callback();
+                    if (popup.status == PopupStatus_Init && popup.callback != nullptr) {
+
+                        // Create a new buffer window
+                        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+                        buffer_window = glfwCreateWindow(1280, 720, "", nullptr, window);
+
+                        // Change status to prevent any UI
+                        popup.status = PopupStatus_Processing;
+                        std::thread popup_thread(popup.callback);
                         popup.callback = nullptr;
+                        popup_thread.detach();
                     }
 
-                    // Close the popup and clear data
-                    ImGui::CloseCurrentPopup();
-                    popup.text.clear();
-                    popup.flags = POPUP_NONE;
+                    // Close the popup and clear data if callback finished
+                    if (popup.status == PopupStatus_Finished) {
+                        glfwMakeContextCurrent(window);
+                        ImGui::CloseCurrentPopup();
+                        popup.text.clear();
+                        popup.flags = PopupFlag_None;
+
+                        // Destroy the buffer window
+                        glfwDestroyWindow(buffer_window);
+                    }
                 }
+
                 // Close the popup automatically if no flags were set
                 else {
                     popup.text.clear();
                     ImGui::CloseCurrentPopup();
-                    popup.flags = POPUP_NONE;
+                    popup.flags = PopupFlag_None;
                 }
             }
             ImGui::EndPopup();

@@ -1,12 +1,9 @@
-cmake_minimum_required(VERSION 3.23)
+cmake_minimum_required(VERSION 3.20)
 project(SotN_Editor)
 
-# Uncomment to generate debug info
-#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
-
+# Locate dependencies
 find_package(OpenGL REQUIRED)
 find_package(glfw3 REQUIRED)
-
 find_package(GLEW REQUIRED)
 include_directories(${GLEW_INCLUDE_DIRS})
 link_libraries(${GLEW_LIBRARIES})
@@ -40,6 +37,7 @@ target_sources(
         src/sprites.cpp
         src/utils.cpp
         src/log.cpp
+        src/entities.cpp
 )
 
 # Set icon for Windows builds
@@ -57,23 +55,19 @@ if(APPLE)
     target_sources(${PROJECT_NAME} PRIVATE ${SOTN_ICON})
 endif()
 
+# Set standard to C++17
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
 
+# Link the imported libraries
 target_link_libraries(
     ${PROJECT_NAME}
-    PUBLIC
-        glfw
-        GLEW::GLEW
     PRIVATE
         nfd
+        glfw
+        GLEW::GLEW
 )
 
 # Include GL for Linux targets
 if(UNIX AND NOT APPLE)
     target_link_libraries(${PROJECT_NAME} PUBLIC GL)
-endif()
-
-# Include OpenGL32 for Windows targets
-if(MSVC)
-    target_link_libraries( ${PROJECT_NAME} PUBLIC OpenGL32)
 endif()

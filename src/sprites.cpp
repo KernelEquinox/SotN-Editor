@@ -61,12 +61,23 @@ std::vector<std::vector<Sprite>> Sprite::ReadSpriteBanks(const byte* buf, const 
             // Note: This can be over 0x8000 (flag set)
             ushort num_parts = *(ushort*)(buf + sprite_addr);
 
-            // Loop through each sprite part
-            for (int x = 0; x < num_parts; x++) {
-                uint cur_offset = x * sizeof(SpritePart);
-                SpritePart part = *(SpritePart*)(buf + sprite_addr + cur_offset + 2);
-                sprite.parts.push_back(part);
-                sprite.address = sprite_addr + cur_offset;
+            // Determine whether this is a null sprite
+            if ((num_parts & 0x8000) == 0x8000) {
+                NullSpritePart null_part = *(NullSpritePart*)(buf + sprite_addr);
+                sprite.null_parts.push_back(null_part);
+                sprite.address = sprite_addr;
+            }
+
+            // Get each part of the sprite
+            else {
+                sprite.address = sprite_addr;
+
+                // Loop through each sprite part
+                for (int x = 0; x < num_parts; x++) {
+                    uint cur_offset = x * sizeof(SpritePart);
+                    SpritePart part = *(SpritePart*)(buf + sprite_addr + cur_offset + 2);
+                    sprite.parts.push_back(part);
+                }
             }
 
             // Add the sprite to the list

@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <iterator>
 #include <math.h>
-#define GLEW_STATIC
 #include <GL/glew.h>
 #if defined(IMGUI_IMPL_OPENGL_ES2)
 #include <GLES2/gl2.h>
@@ -115,6 +114,7 @@ void Map::LoadMapFile(const char* filename) {
 // -- Rooms ----------------------------------------------------------------------------------------------------
 
     // Read the room list
+    load_status_msg = "Reading Room Data ...";
     if (room_list_addr > 0) {
         uint i = 0;
         while (*(uint *)(map_data + room_list_addr + i) != 0x00000040) {
@@ -154,6 +154,7 @@ void Map::LoadMapFile(const char* filename) {
 // -- Sprite Banks ---------------------------------------------------------------------------------------------
 
     // Check if any sprite banks were defined
+    load_status_msg = "Reading Sprite Banks ...";
     if (sprite_banks_addr > 0) {
 
         // Read the sprite banks
@@ -168,6 +169,7 @@ void Map::LoadMapFile(const char* filename) {
 // -- CLUTs ----------------------------------------------------------------------------------------------------
 
     // Get the address of the CLUT data
+    load_status_msg = "Reading CLUT Data ...";
     if (cluts_addr > 0) {
         uint clut_list_addr = *(uint*)(map_data + cluts_addr) - MAP_BIN_OFFSET;
 
@@ -214,6 +216,7 @@ void Map::LoadMapFile(const char* filename) {
 // -- Entity Layouts -------------------------------------------------------------------------------------------
 
     // Loop through all 53 entries
+    load_status_msg = "Reading Entity Layout Data ...";
     if (entity_layouts_addr > 0) {
         for (int i = 0; i < 53; i++) {
 
@@ -263,6 +266,7 @@ void Map::LoadMapFile(const char* filename) {
 // -- Tile Layers ----------------------------------------------------------------------------------------------
 
     // Check if tile layers exist
+    load_status_msg = "Reading Tile Layer Data ...";
     if (tile_layers_addr > 0) {
 
         // Loop through layers until no more exist
@@ -376,6 +380,7 @@ void Map::LoadMapFile(const char* filename) {
 // -- Entity Graphics ------------------------------------------------------------------------------------------
 
     // Check if entity graphics exist
+    load_status_msg = "Reading Entity Graphics Data ...";
     if (entity_graphics_addr > 0) {
 
         // Loop until the beginning of the Entity Layouts section is hit (indicating end of graphics section)
@@ -446,6 +451,7 @@ void Map::LoadMapFile(const char* filename) {
 // -- Populate Room Data ---------------------------------------------------------------------------------------
 
     // Loop through each room
+    load_status_msg = "Populating Room Data ...";
     for (int i = 0; i < rooms.size(); i++) {
 
         // Get the layer data only if this is not a transition room
@@ -525,6 +531,7 @@ void Map::LoadMapFile(const char* filename) {
 // -- Entity Functions -----------------------------------------------------------------------------------------
 
     // Make sure entity functions exist
+    load_status_msg = "Reading Entity Functions ...";
     if (entity_functions_addr > 0) {
 
         // Get the first function pointer (should point to dummy data)
@@ -611,6 +618,7 @@ void Map::LoadMapGraphics(const char* filename) {
 
 
 
+    load_status_msg = "Reading Map Textures Into VRAM ...";
 
     // Allocate data for a full VRAM texture
     byte* vram_data = (byte*)calloc(num_bytes * 4 * 2, sizeof(byte));
@@ -665,6 +673,7 @@ void Map::LoadMapGraphics(const char* filename) {
 
 
 
+    load_status_msg = "Loading Map Tile CLUTs ...";
 
     // Bind to the VRAM texture
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, vram_texture, 0);
@@ -678,6 +687,7 @@ void Map::LoadMapGraphics(const char* filename) {
     free(indexed_cluts);
 
     // Collect all of the tilesets
+    load_status_msg = "Creating Tileset Textures ...";
     for (int i = 0; i < 8; i++) {
 
         // Read a block of pixels from VRAM
@@ -715,7 +725,10 @@ void Map::LoadMapGraphics(const char* filename) {
 
 
     // Loop through all of the layers
+    load_status_msg = "Creating Tile Textures ...";
     for (int i = 0; i < tile_layers.size(); i++) {
+
+        load_status_msg = Utils::FormatString("Creating Tile Textures ( %02d / %02d ) ...", i, tile_layers.size());
 
         // Loop through each FG/BG layer
         for (int k = 0; k < 2; k++) {
@@ -822,7 +835,10 @@ void Map::LoadMapGraphics(const char* filename) {
 
 
 
+    // Loop through each room to create a single texture from the tile layers
     for (int i = 0; i < rooms.size(); i++) {
+
+        load_status_msg = Utils::FormatString("Converting Layers to Textures ( %02d / %02d ) ...", i, rooms.size());
 
         Room* cur_room = &rooms[i];
 
@@ -1014,9 +1030,11 @@ void Map::LoadMapEntities() {
         MipsEmulator::Reset();
 
         // Populate CLUT stuff
+        load_status_msg = "Populating CLUT Data in MIPS RAM ...";
         MipsEmulator::ProcessFunction(0x000EAD7C);
 
         // Loop through each entry in the init list
+        load_status_msg = "Copying Entity Data to MIPS RAM ...";
         for (int k = 0; k < init_data_list.size(); k++) {
 
             // Create initial entities
@@ -1060,9 +1078,11 @@ void Map::LoadMapEntities() {
         MipsEmulator::WriteIntToRAM(ROOM_TILE_DATA_ADDR, cur_room->fg_layer.tile_data_addr + MAP_RAM_OFFSET);
 
         // Process all of the entities in RAM
+        load_status_msg = "Running Entity Functions ...";
         std::vector<Entity> entities = MipsEmulator::ProcessEntities();
 
         // Commit any framebuffer changes
+        load_status_msg = "Committing Framebuffer Changes ...";
         byte* fb_pixels = Utils::GetPixels(MipsEmulator::framebuffer, 0, 240, 768, 16);
         byte* indexed_pixels = Utils::RGBA_to_Indexed(fb_pixels, 768 * 16);
         free(fb_pixels);
@@ -1083,6 +1103,7 @@ void Map::LoadMapEntities() {
         // Associate entities with the room
         cur_room->entities = entities;
 
+        load_status_msg = "Processing Entity Graphics ...";
         for (int entity_idx = 0; entity_idx < entities.size(); entity_idx++) {
 
             // Get the current entity
@@ -1090,7 +1111,8 @@ void Map::LoadMapEntities() {
 
             // Check if the entity has a POLY_GT4 struct
             if (entity->data.unk7C != 0) {
-                if ((entity->data.unk34 & 0xFFFF) == 0x2000) {
+                //if ((entity->data.unk34 & 0xFFFF) == 0x2000) {
+                if ((entity->data.unk34 & 0x800000) == 0x800000) {
 
                     // Set the current polygon address
                     uint polygt4_addr = entity->data.unk7C - RAM_BASE_OFFSET;
@@ -1201,6 +1223,15 @@ void Map::LoadMapEntities() {
                         // Determine any texture flipping
                         entity_subsprite.flip_x = (polygon.x0 > polygon.x1) ^ (polygon.u0 > polygon.u1);
                         entity_subsprite.flip_y = (polygon.y0 > polygon.y2) ^ (polygon.v0 > polygon.v2);
+
+                        // Determine transformations
+                        entity_subsprite.rotate = entity->data.rotation;
+
+                        // Set anchor point for transformations
+                        uint hitbox_width = (entity->data.hitbox_width > 0 ? entity->data.hitbox_width : 16);
+                        uint hitbox_height = (entity->data.hitbox_height > 0 ? entity->data.hitbox_height : 16);
+                        entity_subsprite.anchor_x = entity->data.pos_x + (hitbox_width / 2);
+                        entity_subsprite.anchor_y = entity->data.pos_y + (hitbox_height / 2);
 
                         // Determine blend mode
                         if ((entity->data.blend_mode & BLEND_MODE_UNK70) == BLEND_MODE_UNK70) {
@@ -1327,6 +1358,9 @@ void Map::LoadMapEntities() {
                     entity_subsprite.flip_y = ((image.flags & 1) == 1);
                     entity_subsprite.flip_x = ((image.flags & 2) == 2);
 
+                    // Determine transformations
+                    entity_subsprite.rotate = entity->data.rotation;
+
                     // Determine blend mode
                     if ((entity->data.blend_mode & BLEND_MODE_UNK70) == BLEND_MODE_UNK70) {
                         entity_subsprite.blend_mode = BLEND_MODE_UNK70;
@@ -1419,6 +1453,9 @@ void Map::LoadMapEntities() {
                         // Determine any texture flipping
                         entity_subsprite.flip_y = ((image.flags & 1) == 1);
                         entity_subsprite.flip_x = ((image.flags & 2) == 2);
+
+                        // Determine transformations
+                        entity_subsprite.rotate = entity->data.rotation;
 
                         // Determine blend mode
                         if ((entity->data.blend_mode & BLEND_MODE_UNK70) == BLEND_MODE_UNK70) {
@@ -1521,6 +1558,9 @@ void Map::LoadMapEntities() {
                         entity_subsprite.flip_y = ((image.flags & 1) == 1);
                         entity_subsprite.flip_x = ((image.flags & 2) == 2);
 
+                        // Determine transformations
+                        entity_subsprite.rotate = entity->data.rotation;
+
                         // Determine blend mode
                         if ((entity->data.blend_mode & BLEND_MODE_UNK70) == BLEND_MODE_UNK70) {
                             entity_subsprite.blend_mode = BLEND_MODE_UNK70;
@@ -1620,6 +1660,9 @@ void Map::LoadMapEntities() {
                     // Determine any texture flipping
                     entity_subsprite.flip_y = ((image.flags & 1) == 1);
                     entity_subsprite.flip_x = ((image.flags & 2) == 2);
+
+                    // Determine transformations
+                    entity_subsprite.rotate = entity->data.rotation;
 
                     // Determine blend mode
                     if ((entity->data.blend_mode & BLEND_MODE_UNK70) == BLEND_MODE_UNK70) {
@@ -1753,6 +1796,9 @@ void Map::LoadMapEntities() {
                             entity_subsprite.flip_y = ((image.flags & 1) == 1);
                             entity_subsprite.flip_x = ((image.flags & 2) == 2);
 
+                            // Determine transformations
+                            entity_subsprite.rotate = entity->data.rotation;
+
                             // Determine blend mode
                             if ((entity->data.blend_mode & BLEND_MODE_UNK70) == BLEND_MODE_UNK70) {
                                 entity_subsprite.blend_mode = BLEND_MODE_UNK70;
@@ -1804,9 +1850,9 @@ void Map::LoadMapEntities() {
                             byte* pixels = (byte*)calloc((image.width / 4) * image.height * 4, sizeof(byte));
                             glReadBuffer(GL_COLOR_ATTACHMENT0);
                             glReadPixels(
-                                    image.texture_start_x / 4, image.texture_start_y,
-                                    image.width / 4, image.height,
-                                    GL_RGBA, GL_UNSIGNED_BYTE, pixels
+                                image.texture_start_x / 4, image.texture_start_y,
+                                image.width / 4, image.height,
+                                GL_RGBA, GL_UNSIGNED_BYTE, pixels
                             );
 
                             // Select the appropriate CLUT
@@ -1855,6 +1901,9 @@ void Map::LoadMapEntities() {
                             // Determine any texture flipping
                             entity_subsprite.flip_y = ((image.flags & 1) == 1);
                             entity_subsprite.flip_x = ((image.flags & 2) == 2);
+
+                            // Determine transformations
+                            entity_subsprite.rotate = entity->data.rotation;
 
                             // Determine blend mode
                             if ((entity->data.blend_mode & BLEND_MODE_UNK70) == BLEND_MODE_UNK70) {
@@ -2002,6 +2051,9 @@ void Map::LoadMapEntities() {
                         // Determine any texture flipping
                         entity_subsprite.flip_y = ((image.flags & 1) == 1);
                         entity_subsprite.flip_x = ((image.flags & 2) == 2);
+
+                        // Determine transformations
+                        entity_subsprite.rotate = entity->data.rotation;
 
                         // Determine blend mode
                         if ((entity->data.blend_mode & BLEND_MODE_UNK70) == BLEND_MODE_UNK70) {

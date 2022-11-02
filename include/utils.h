@@ -142,6 +142,8 @@ class Utils {
         static std::string ReadSotnString(const byte* data);
         static void FindReplace(std::string* str, const std::string& find, const std::string& replace);
         static void SJIS_to_ASCII(std::string* str);
+        static std::string FormatString(const char* fmt, ...);
+        static std::string FormatStringArgs(const char* fmt, va_list args);
 
 
 	private:
