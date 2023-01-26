@@ -499,8 +499,12 @@ void Utils::SJIS_to_ASCII(std::string* str) {
  */
 std::string Utils::FormatStringArgs(const char* fmt, va_list args) {
 
+    // Copy va_list into tmp_list as vsnprintf will change the va_list internally.
+    va_list tmp_list;
+    va_copy(tmp_list, args);
+
     // Get the size of the string
-    int len = vsnprintf(nullptr, 0, fmt, args) + 1;
+    int len = vsnprintf(nullptr, 0, fmt, tmp_list) + 1;
 
     // Check if length was invalid
     if (len <= 0) {
