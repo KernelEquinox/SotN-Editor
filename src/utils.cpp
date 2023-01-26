@@ -33,10 +33,12 @@ std::string Utils::toLowerCase(std::string str) {
  *
  * @param str: Input string
  *
- * @return Is the input string all in lowercase
+ * @return True if the input string is all in lowercase
  */
 bool Utils::isLowerCase(std::string str) {
-    return std::all_of(str.begin(), str.end(), &::islower);
+
+    std::string tmp = str;
+    return tmp == Utils::toLowerCase(str);
 }
 
 /**

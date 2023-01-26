@@ -449,6 +449,16 @@ void load_map_data(const std::filesystem::path& map_path) {
     std::string map_gfx_file = "";
     bool isLowerCase = Utils::isLowerCase(map_filename);
 
+    // Check if the user has selected a map graphics file by accident
+    if (Utils::toLowerCase(map_filename.substr(0, 2)) == "f_") {
+        std::string prefix = isLowerCase ? "f_" : "F_";
+        error = "Files starting with \"" + prefix + "\" are map graphics files.\n"
+            "Please select a proper map data file instead.";
+        // Tell the modal popup that the processing has finished
+        popup.status = PopupStatus_Finished;
+        return;
+    }
+
     // Try and find the map graphics file, setting the map_gfx_file variable if it was found
     for (const auto& entry : std::filesystem::directory_iterator(map_dir)) {
         std::string f = Utils::toLowerCase(entry.path().string());
@@ -512,7 +522,11 @@ void load_map_data(const std::filesystem::path& map_path) {
         error.clear();
     }
     else {
-        error = "Could not find graphics file (" + isLowerCase ? "f_" : "F_" + map_filename + ").";
+        std::string prefix = isLowerCase ? "f_" : "F_";
+        error = "Could not find graphics file (" + prefix + map_filename + ").";
+        // Tell the modal popup that the processing has finished
+        popup.status = PopupStatus_Finished;
+        return;
     }
 
 
