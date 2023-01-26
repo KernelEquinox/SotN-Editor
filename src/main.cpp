@@ -2,10 +2,13 @@
 #include "imgui_internal.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <functional>
+#include <string>
 #include <thread>
 
 // Include this for MSVC since it doesn't like M_PI
@@ -105,6 +108,16 @@ GLuint generic_powerup_texture;
 GLuint generic_saveroom_texture;
 GLuint generic_loadroom_texture;
 
+
+/**
+ * Convert a string to lowercase in-place.
+ *
+ * @param str: Input string
+ */
+static std::string toLowerCase(std::string str) {
+    std::transform(str.begin(), str.end(), str.begin(), [](unsigned char c) { return std::tolower(c); });
+    return str;
+}
 
 /**
  * Opens the SotN section of the imgui.ini file.
@@ -446,13 +459,20 @@ void load_map_data(const std::filesystem::path& map_path) {
 
     std::string map_dir = map_path.parent_path().string();
     std::string map_filename = map_path.filename().string();
-    std::string map_gfx_file = map_dir + "/F_" + map_filename;
+    std::string map_gfx_file = "";
+    bool isLowerCase = std::all_of(map_filename.begin(), map_filename.end(), &::islower);
+
+    // Try and find the map graphics file, setting the map_gfx_file variable if it was found
+    for (const auto& entry : std::filesystem::directory_iterator(map_dir)) {
+        std::string f = toLowerCase(entry.path().string());
+        if (f == map_dir + "/f_" + map_filename) {
+            map_gfx_file = entry.path().string();
+            break;
+        }
+    }
 
     // Make sure map graphics file exists in the same directory as the map file itself
-    if (FILE* fp = fopen(map_gfx_file.c_str(), "r")) {
-
-        // Close the file
-        fclose(fp);
+    if (map_gfx_file != "") {
 
         // Initialize the emulator
         if (MipsEmulator::initialized) {
@@ -505,7 +525,7 @@ void load_map_data(const std::filesystem::path& map_path) {
         error.clear();
     }
     else {
-        error = "Could not find graphics file (F_" + map_filename + ").";
+        error = "Could not find graphics file (" + isLowerCase ? "f_" : "F_" + map_filename + ").";
     }
 
 
@@ -907,8 +927,8 @@ int main(int, char**)
                 };
                 nfdchar_t* out_path = open_file(filters);
                 if (out_path != nullptr) {
-                    std::string filename = std::filesystem::path(out_path).filename().string();
-                    if (filename == "DRA.BIN") {
+                    std::string filename = toLowerCase(std::filesystem::path(out_path).filename().string());
+                    if (filename == "dra.bin") {
                         bin_path = out_path;
                         MipsEmulator::SetSotNBinary(bin_path);
                         error.clear();
@@ -948,8 +968,8 @@ int main(int, char**)
                 };
                 nfdchar_t* out_path = open_file(filters);
                 if (out_path != nullptr) {
-                    std::string filename = std::filesystem::path(out_path).filename().string();
-                    if (filename == "F_GAME.BIN") {
+                    std::string filename = toLowerCase(std::filesystem::path(out_path).filename().string());
+                    if (filename == "f_game.bin") {
                         gfx_path = out_path;
                         error.clear();
                     }
