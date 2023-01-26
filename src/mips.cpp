@@ -1031,6 +1031,23 @@ void MipsEmulator::i_lb(uint src_index, uint dst_index, short imm) {
     // Check if address to load is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
+    } else if (RAM_BASE_OFFSET + src + imm >= RAM_MAX_OFFSET) {
+        Log::Error("Tried to read out of bounds address.\n"
+            "PC: %08X  % 6d    "
+            "Load byte from %s (%08X) + %04X (=%08X) into %s"
+            "\n                                   * %s = %08X\n",
+            pc + RAM_BASE_OFFSET,
+            num_executed,
+            register_names[src_index],
+            src,
+            imm,
+            src + imm,
+            register_names[dst_index],
+            register_names[dst_index],
+            registers[dst_index]
+        );
+
+        return;
     }
 
     // Fetch from scratchpad memory or MCTRL1, IO ports, etc.
@@ -1066,6 +1083,23 @@ void MipsEmulator::i_lh(uint src_index, uint dst_index, short imm) {
     // Check if address to load is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
+    } else if (RAM_BASE_OFFSET + src + imm >= RAM_MAX_OFFSET) {
+        Log::Error("Tried to read out of bounds address.\n"
+            "PC: %08X  % 6d    "
+            "Load short from %s (%08X) + %04X (=%08X) into %s"
+            "\n                                   * %s = %08X\n",
+            pc + RAM_BASE_OFFSET,
+            num_executed,
+            register_names[src_index],
+            src,
+            imm,
+            src + imm,
+            register_names[dst_index],
+            register_names[dst_index],
+            registers[dst_index]
+        );
+
+        return;
     }
 
     // Fetch from scratchpad memory or MCTRL1, IO ports, etc.
@@ -1101,6 +1135,23 @@ void MipsEmulator::i_lwl(uint src_index, uint dst_index, short imm) {
     // Check if address to load is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
+    } else if (RAM_BASE_OFFSET + src + imm >= RAM_MAX_OFFSET) {
+        Log::Error("Tried to read out of bounds address.\n"
+            "PC: %08X  % 6d    "
+            "Load word (LEFT) from %s (%08X) + %04X (=%08X) into %s"
+            "\n                                   * %s = %08X\n",
+            pc + RAM_BASE_OFFSET,
+            num_executed,
+            register_names[src_index],
+            src,
+            imm,
+            src + imm,
+            register_names[dst_index],
+            register_names[dst_index],
+            registers[dst_index]
+        );
+
+        return;
     }
 
     // Fetch from scratchpad memory or MCTRL1, IO ports, etc. (adjusted so that the target address is the lowest order byte)
@@ -1136,6 +1187,23 @@ void MipsEmulator::i_lw(uint src_index, uint dst_index, short imm) {
     // Check if address to load is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
+    } else if (RAM_BASE_OFFSET + src + imm >= RAM_MAX_OFFSET) {
+        Log::Error("Tried to read out of bounds address.\n"
+            "PC: %08X  % 6d    "
+            "Load word from %s (%08X) + %04X (=%08X) into %s"
+            "\n                                   * %s = %08X\n",
+            pc + RAM_BASE_OFFSET,
+            num_executed,
+            register_names[src_index],
+            src,
+            imm,
+            src + imm,
+            register_names[dst_index],
+            register_names[dst_index],
+            registers[dst_index]
+        );
+
+        return;
     }
 
     // Fetch from scratchpad memory or MCTRL1, IO ports, etc.
@@ -1171,6 +1239,23 @@ void MipsEmulator::i_lbu(uint src_index, uint dst_index, short imm) {
     // Check if address to load is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
+    } else if (RAM_BASE_OFFSET + src + imm >= RAM_MAX_OFFSET) {
+        Log::Error("Tried to read out of bounds address.\n"
+            "PC: %08X  % 6d    "
+            "Load byte (unsigned) from %s (%08X) + %04X (=%08X) into %s"
+            "\n                                   * %s = %08X\n",
+            pc + RAM_BASE_OFFSET,
+            num_executed,
+            register_names[src_index],
+            src,
+            imm,
+            src + imm,
+            register_names[dst_index],
+            register_names[dst_index],
+            registers[dst_index]
+        );
+
+        return;
     }
 
     // Fetch from scratchpad memory or MCTRL1, IO ports, etc.
@@ -1206,6 +1291,23 @@ void MipsEmulator::i_lhu(uint src_index, uint dst_index, short imm) {
     // Check if address to load is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
+    } else if (RAM_BASE_OFFSET + src + imm >= RAM_MAX_OFFSET) {
+        Log::Error("Tried to read out of bounds address.\n"
+            "PC: %08X  % 6d    "
+            "Load short (unsigned) from %s (%08X) + %04X (=%08X) into %s"
+            "\n                                   * %s = %08X\n",
+            pc + RAM_BASE_OFFSET,
+            num_executed,
+            register_names[src_index],
+            src,
+            imm,
+            src + imm,
+            register_names[dst_index],
+            register_names[dst_index],
+            registers[dst_index]
+        );
+
+        return;
     }
 
     // Fetch from scratchpad memory or MCTRL1, IO ports, etc.
@@ -1241,6 +1343,23 @@ void MipsEmulator::i_lwr(uint src_index, uint dst_index, short imm) {
     // Check if address to load is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
+    } else if (RAM_BASE_OFFSET + src + imm >= RAM_MAX_OFFSET) {
+        Log::Error("Tried to read out of bounds address.\n"
+            "PC: %08X  % 6d    "
+            "Load word (RIGHT) from %s (%08X) + %04X (=%08X) into %s"
+            "\n                                   * %s = %08X\n",
+            pc + RAM_BASE_OFFSET,
+            num_executed,
+            register_names[src_index],
+            src,
+            imm,
+            src + imm,
+            register_names[dst_index],
+            register_names[dst_index],
+            registers[dst_index]
+        );
+
+        return;
     }
 
     // Fetch from scratchpad memory or MCTRL1, IO ports, etc.
@@ -1273,9 +1392,27 @@ void MipsEmulator::i_lwr(uint src_index, uint dst_index, short imm) {
 void MipsEmulator::i_sb(uint src_index, uint dst_index, short imm) {
     uint src = registers[src_index];
 
-    // Check if address to load is in addressable memory space
+    // Check if store address is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
+    } else if (RAM_BASE_OFFSET + src + imm >= RAM_MAX_OFFSET) {
+        Log::Error("Tried to write to out of bounds address.\n"
+            "PC: %08X  % 6d    "
+            "Store byte %s (%02X) at %s %08X + %04X (=%08X)"
+            "\n                                   [%08X] = %02X\n",
+            pc + RAM_BASE_OFFSET,
+            num_executed,
+            register_names[dst_index],
+            registers[dst_index],
+            register_names[src_index],
+            src,
+            imm,
+            src + imm,
+            src + imm + RAM_BASE_OFFSET,
+            registers[dst_index]
+        );
+
+        return;
     }
 
     // Store in scratchpad memory or MCTRL1, IO ports, etc.
@@ -1310,9 +1447,27 @@ void MipsEmulator::i_sb(uint src_index, uint dst_index, short imm) {
 void MipsEmulator::i_sh(uint src_index, uint dst_index, short imm) {
     uint src = registers[src_index];
 
-    // Check if address to load is in addressable memory space
+    // Check if store address is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
+    } else if (RAM_BASE_OFFSET + src + imm >= RAM_MAX_OFFSET) {
+        Log::Error("Tried to write to out of bounds address.\n"
+            "PC: %08X  % 6d    "
+            "Store short %s (%04X) at %s %08X + %04X (=%08X)"
+            "\n                                   [%08X] = %04X\n",
+            pc + RAM_BASE_OFFSET,
+            num_executed,
+            register_names[dst_index],
+            registers[dst_index],
+            register_names[src_index],
+            src,
+            imm,
+            src + imm,
+            src + imm + RAM_BASE_OFFSET,
+            registers[dst_index]
+        );
+
+        return;
     }
 
     // Store in scratchpad memory or MCTRL1, IO ports, etc.
@@ -1346,9 +1501,27 @@ void MipsEmulator::i_sh(uint src_index, uint dst_index, short imm) {
 void MipsEmulator::i_swl(uint src_index, uint dst_index, short imm) {
     uint src = registers[src_index];
 
-    // Check if address to load is in addressable memory space
+    // Check if store address is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
+    } else if (RAM_BASE_OFFSET + src + imm >= RAM_MAX_OFFSET) {
+        Log::Error("Tried to write to out of bounds address.\n"
+            "PC: %08X  % 6d    "
+            "Store word (LEFT) %s (%08X) at %s %08X + %04X (=%08X)"
+            "\n                                   [%08X] = %08X\n",
+            pc + RAM_BASE_OFFSET,
+            num_executed,
+            register_names[dst_index],
+            registers[dst_index],
+            register_names[src_index],
+            src,
+            imm,
+            src + imm,
+            src + imm + RAM_BASE_OFFSET,
+            registers[dst_index]
+        );
+
+        return;
     }
 
     // Store in scratchpad memory or MCTRL1, IO ports, etc. (adjusted so that the target address is the lowest order byte)
@@ -1382,9 +1555,27 @@ void MipsEmulator::i_swl(uint src_index, uint dst_index, short imm) {
 void MipsEmulator::i_sw(uint src_index, uint dst_index, short imm) {
     uint src = registers[src_index];
 
-    // Check if address to load is in addressable memory space
+    // Check if store address is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
+    } else if (RAM_BASE_OFFSET + src + imm >= RAM_MAX_OFFSET) {
+        Log::Error("Tried to write to out of bounds address.\n"
+            "PC: %08X  % 6d    "
+            "Store word %s (%08X) at %s %08X + %04X (=%08X)"
+            "\n                                   [%08X] = %08X\n",
+            pc + RAM_BASE_OFFSET,
+            num_executed,
+            register_names[dst_index],
+            registers[dst_index],
+            register_names[src_index],
+            src,
+            imm,
+            src + imm,
+            src + imm + RAM_BASE_OFFSET,
+            registers[dst_index]
+        );
+
+        return;
     }
 
     // Store in scratchpad memory or MCTRL1, IO ports, etc.
@@ -1418,9 +1609,27 @@ void MipsEmulator::i_sw(uint src_index, uint dst_index, short imm) {
 void MipsEmulator::i_swr(uint src_index, uint dst_index, short imm) {
     uint src = registers[src_index];
 
-    // Check if address to load is in addressable memory space
+    // Check if store address is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
+    } else if (RAM_BASE_OFFSET + src + imm >= RAM_MAX_OFFSET) {
+        Log::Error("Tried to write to out of bounds address.\n"
+            "PC: %08X  % 6d    "
+            "Store word (right) %s (%08X) at %s %08X + %04X (=%08X)"
+            "\n                                   [%08X] = %08X\n",
+            pc + RAM_BASE_OFFSET,
+            num_executed,
+            register_names[dst_index],
+            registers[dst_index],
+            register_names[src_index],
+            src,
+            imm,
+            src + imm,
+            src + imm + RAM_BASE_OFFSET,
+            registers[dst_index]
+        );
+
+        return;
     }
 
     // Store in scratchpad memory or MCTRL1, IO ports, etc.
@@ -1471,6 +1680,24 @@ void MipsEmulator::i_lwc2(uint src_index, uint dst_index, short imm) {
     // Check if address to load is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
+    } else if (RAM_BASE_OFFSET + src + imm >= RAM_MAX_OFFSET) {
+        uint val = *(uint*)(mem_base + src + imm);
+        Log::Error("Tried to read out of bounds address.\n"
+            "PC: %08X  % 6d    "
+            "LWC2 :: Cop2_Data[%d] = [%s+%04X] ([%08X] -> %08X)"
+            "\n                                   * Cop2_Data[%d] = %08X\n",
+            pc + RAM_BASE_OFFSET,
+            num_executed,
+            dst_index,
+            register_names[src_index],
+            imm,
+            src + imm,
+            val,
+            dst_index,
+            val
+        );
+
+        return;
     }
 
     // Check if address is in the scratchpad area
@@ -1520,9 +1747,28 @@ void MipsEmulator::i_swc2(uint src_index, uint dst_index, short imm) {
     // Set base memory address
     byte* mem_base = ram;
 
-    // Check if address to load is in addressable memory space
+    // Check if store address is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
+    } else if (RAM_BASE_OFFSET + src + imm >= RAM_MAX_OFFSET) {
+        byte* ram_offset = mem_base + src + imm;
+        uint val = *(uint*)(ram_offset);
+        Log::Error("Tried to write to out of bounds address.\n"
+            "PC: %08X  % 6d    "
+            "SWC2 :: [%s+%04X] ([%08X] -> %08X) = Cop2_Data[%d]"
+            "\n                                   * [%08X] = %08X\n",
+            pc + RAM_BASE_OFFSET,
+            num_executed,
+            register_names[src_index],
+            imm,
+            registers[src_index] + imm,
+            val,
+            dst_index,
+            registers[src_index] + imm,
+            *(uint*)(ram_offset)
+        );
+
+        return;
     }
 
     // Check if address is in the scratchpad area
