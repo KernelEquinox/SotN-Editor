@@ -1031,7 +1031,8 @@ void MipsEmulator::i_lb(uint src_index, uint dst_index, short imm) {
     // Check if address to load is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
-    } else if (RAM_BASE_OFFSET + src + imm >= RAM_MAX_OFFSET) {
+    } else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET
+            && (src & 0x1F800000) != 0x1F800000) {
         Log::Error("Tried to read out of bounds address.\n"
             "PC: %08X  % 6d    "
             "Load byte from %s (%08X) + %04X (=%08X) into %s"
@@ -1083,7 +1084,8 @@ void MipsEmulator::i_lh(uint src_index, uint dst_index, short imm) {
     // Check if address to load is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
-    } else if (RAM_BASE_OFFSET + src + imm >= RAM_MAX_OFFSET) {
+    } else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET
+            && (src & 0x1F800000) != 0x1F800000) {
         Log::Error("Tried to read out of bounds address.\n"
             "PC: %08X  % 6d    "
             "Load short from %s (%08X) + %04X (=%08X) into %s"
@@ -1135,7 +1137,8 @@ void MipsEmulator::i_lwl(uint src_index, uint dst_index, short imm) {
     // Check if address to load is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
-    } else if (RAM_BASE_OFFSET + src + imm >= RAM_MAX_OFFSET) {
+    } else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET
+            && (src & 0x1F800000) != 0x1F800000) {
         Log::Error("Tried to read out of bounds address.\n"
             "PC: %08X  % 6d    "
             "Load word (LEFT) from %s (%08X) + %04X (=%08X) into %s"
@@ -1187,7 +1190,8 @@ void MipsEmulator::i_lw(uint src_index, uint dst_index, short imm) {
     // Check if address to load is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
-    } else if (RAM_BASE_OFFSET + src + imm >= RAM_MAX_OFFSET) {
+    } else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET
+            && (src & 0x1F800000) != 0x1F800000) {
         Log::Error("Tried to read out of bounds address.\n"
             "PC: %08X  % 6d    "
             "Load word from %s (%08X) + %04X (=%08X) into %s"
@@ -1239,7 +1243,8 @@ void MipsEmulator::i_lbu(uint src_index, uint dst_index, short imm) {
     // Check if address to load is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
-    } else if (RAM_BASE_OFFSET + src + imm >= RAM_MAX_OFFSET) {
+    } else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET
+            && (src & 0x1F800000) != 0x1F800000) {
         Log::Error("Tried to read out of bounds address.\n"
             "PC: %08X  % 6d    "
             "Load byte (unsigned) from %s (%08X) + %04X (=%08X) into %s"
@@ -1291,7 +1296,8 @@ void MipsEmulator::i_lhu(uint src_index, uint dst_index, short imm) {
     // Check if address to load is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
-    } else if (RAM_BASE_OFFSET + src + imm >= RAM_MAX_OFFSET) {
+    } else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET
+            && (src & 0x1F800000) != 0x1F800000) {
         Log::Error("Tried to read out of bounds address.\n"
             "PC: %08X  % 6d    "
             "Load short (unsigned) from %s (%08X) + %04X (=%08X) into %s"
@@ -1343,7 +1349,8 @@ void MipsEmulator::i_lwr(uint src_index, uint dst_index, short imm) {
     // Check if address to load is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
-    } else if (RAM_BASE_OFFSET + src + imm >= RAM_MAX_OFFSET) {
+    } else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET
+            && (src & 0x1F800000) != 0x1F800000) {
         Log::Error("Tried to read out of bounds address.\n"
             "PC: %08X  % 6d    "
             "Load word (RIGHT) from %s (%08X) + %04X (=%08X) into %s"
@@ -1395,7 +1402,8 @@ void MipsEmulator::i_sb(uint src_index, uint dst_index, short imm) {
     // Check if store address is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
-    } else if (RAM_BASE_OFFSET + src + imm >= RAM_MAX_OFFSET) {
+    } else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET
+            && (src & 0x1F800000) != 0x1F800000) {
         Log::Error("Tried to write to out of bounds address.\n"
             "PC: %08X  % 6d    "
             "Store byte %s (%02X) at %s %08X + %04X (=%08X)"
@@ -1450,7 +1458,8 @@ void MipsEmulator::i_sh(uint src_index, uint dst_index, short imm) {
     // Check if store address is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
-    } else if (RAM_BASE_OFFSET + src + imm >= RAM_MAX_OFFSET) {
+    } else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET
+            && (src & 0x1F800000) != 0x1F800000) {
         Log::Error("Tried to write to out of bounds address.\n"
             "PC: %08X  % 6d    "
             "Store short %s (%04X) at %s %08X + %04X (=%08X)"
@@ -1504,7 +1513,8 @@ void MipsEmulator::i_swl(uint src_index, uint dst_index, short imm) {
     // Check if store address is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
-    } else if (RAM_BASE_OFFSET + src + imm >= RAM_MAX_OFFSET) {
+    } else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET
+            && (src & 0x1F800000) != 0x1F800000) {
         Log::Error("Tried to write to out of bounds address.\n"
             "PC: %08X  % 6d    "
             "Store word (LEFT) %s (%08X) at %s %08X + %04X (=%08X)"
@@ -1558,7 +1568,8 @@ void MipsEmulator::i_sw(uint src_index, uint dst_index, short imm) {
     // Check if store address is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
-    } else if (RAM_BASE_OFFSET + src + imm >= RAM_MAX_OFFSET) {
+    } else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET
+            && (src & 0x1F800000) != 0x1F800000) {
         Log::Error("Tried to write to out of bounds address.\n"
             "PC: %08X  % 6d    "
             "Store word %s (%08X) at %s %08X + %04X (=%08X)"
@@ -1612,7 +1623,8 @@ void MipsEmulator::i_swr(uint src_index, uint dst_index, short imm) {
     // Check if store address is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
-    } else if (RAM_BASE_OFFSET + src + imm >= RAM_MAX_OFFSET) {
+    } else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET
+            && (src & 0x1F800000) != 0x1F800000) {
         Log::Error("Tried to write to out of bounds address.\n"
             "PC: %08X  % 6d    "
             "Store word (right) %s (%08X) at %s %08X + %04X (=%08X)"
@@ -1680,7 +1692,8 @@ void MipsEmulator::i_lwc2(uint src_index, uint dst_index, short imm) {
     // Check if address to load is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
-    } else if (RAM_BASE_OFFSET + src + imm >= RAM_MAX_OFFSET) {
+    } else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET
+            && (src & 0x1F800000) != 0x1F800000) {
         uint val = *(uint*)(mem_base + src + imm);
         Log::Error("Tried to read out of bounds address.\n"
             "PC: %08X  % 6d    "
@@ -1750,7 +1763,8 @@ void MipsEmulator::i_swc2(uint src_index, uint dst_index, short imm) {
     // Check if store address is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
-    } else if (RAM_BASE_OFFSET + src + imm >= RAM_MAX_OFFSET) {
+    } else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET
+            && (src & 0x1F800000) != 0x1F800000) {
         byte* ram_offset = mem_base + src + imm;
         uint val = *(uint*)(ram_offset);
         Log::Error("Tried to write to out of bounds address.\n"
