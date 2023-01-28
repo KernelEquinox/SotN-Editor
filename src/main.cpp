@@ -1081,6 +1081,7 @@ int main(int, char**)
                     ImGui::Text("Entity Slot: %04X", selected_entity->slot);
                     ImGui::Text("Entity Address: %08X", selected_entity->address + RAM_BASE_OFFSET);
                     ImGui::Text("Sprite Address: %08X", selected_entity->sprite_address + MAP_BIN_OFFSET);
+                    ImGui::Text("Decomp Function Addr: %08X", map.entity_functions[selected_entity->data.object_id] + MAP_BIN_OFFSET);
 
                     // Copy entity data to the clipboard
                     if (ImGui::Button("Copy to clipboard")) {
