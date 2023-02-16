@@ -38,7 +38,7 @@ std::string Utils::toLowerCase(std::string str) {
 bool Utils::isLowerCase(std::string str) {
 
     std::string tmp = str;
-    return tmp == Utils::toLowerCase(str);
+    return str == Utils::toLowerCase(tmp);
 }
 
 /**
