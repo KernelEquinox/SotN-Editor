@@ -505,7 +505,7 @@ void load_map_data(const std::filesystem::path& map_path) {
 
         // Store map entity CLUTs in MIPS RAM
         map.load_status_msg = "Storing Entity CLUTs ...";
-        for (int i = 0; i < map.entity_cluts.size(); i++) {
+        for (size_t i = 0; i < map.entity_cluts.size(); i++) {
 
             // Get the current entity CLUT data
             ClutEntry clut = map.entity_cluts[i];

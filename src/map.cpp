@@ -118,7 +118,6 @@ void Map::LoadMapFile(const char* filename) {
     if (room_list_addr > 0) {
         uint i = 0;
         while (*(uint *)(map_data + room_list_addr + i) != 0x00000040) {
-
             // Create a new room
             Room room;
 
@@ -145,7 +144,7 @@ void Map::LoadMapFile(const char* filename) {
             rooms.push_back(room);
         }
 
-        Log::Info("Rooms Loaded! Total rooms: %lu\n", rooms.size());
+        Log::Info("Rooms Loaded! Total rooms: %zu\n", rooms.size());
     }
 
 
@@ -257,7 +256,7 @@ void Map::LoadMapFile(const char* filename) {
             entity_layouts.push_back(entity_init_list);
         }
 
-        Log::Info("Entity layouts loaded! Total layouts: %d\n", entity_layouts.size());
+        Log::Info("Entity layouts loaded! Total layouts: %zu\n", entity_layouts.size());
     }
 
 
@@ -371,7 +370,7 @@ void Map::LoadMapFile(const char* filename) {
             tile_layers.push_back(tile_pair);
         }
 
-        Log::Info("Tile layers loaded! Total layers: %d\n", tile_layers.size());
+        Log::Info("Tile layers loaded! Total layers: %zu\n", tile_layers.size());
     }
 
 
@@ -442,7 +441,7 @@ void Map::LoadMapFile(const char* filename) {
             i++;
         }
 
-        Log::Info("Entity graphics loaded! Total entries: %d\n", entity_graphics.size());
+        Log::Info("Entity graphics loaded! Total entries: %zu\n", entity_graphics.size());
     }
 
 
@@ -452,7 +451,7 @@ void Map::LoadMapFile(const char* filename) {
 
     // Loop through each room
     load_status_msg = "Populating Room Data ...";
-    for (int i = 0; i < rooms.size(); i++) {
+    for (size_t i = 0; i < rooms.size(); i++) {
 
         // Get the layer data only if this is not a transition room
         if (rooms[i].load_flag == 0xFF) {
@@ -545,7 +544,7 @@ void Map::LoadMapFile(const char* filename) {
         }
     }
 
-    Log::Info("Entity functions: %d\n", entity_functions.size());
+    Log::Info("Entity functions: %zu\n", entity_functions.size());
 
 
 
@@ -726,9 +725,9 @@ void Map::LoadMapGraphics(const char* filename) {
 
     // Loop through all of the layers
     load_status_msg = "Creating Tile Textures ...";
-    for (int i = 0; i < tile_layers.size(); i++) {
+    for (size_t i = 0; i < tile_layers.size(); i++) {
 
-        load_status_msg = Utils::FormatString("Creating Tile Textures ( %02d / %02d ) ...", i, tile_layers.size());
+        load_status_msg = Utils::FormatString("Creating Tile Textures (%zu / %zu) ...", i, tile_layers.size());
 
         // Loop through each FG/BG layer
         for (int k = 0; k < 2; k++) {
@@ -814,8 +813,7 @@ void Map::LoadMapGraphics(const char* filename) {
     }
 
     // Set each tile layer for each room
-    for (int i = 0; i < rooms.size(); i++) {
-
+    for (size_t i = 0; i < rooms.size(); i++) {
         Room* cur_room = &rooms[i];
 
         // Skip transition rooms
@@ -826,7 +824,7 @@ void Map::LoadMapGraphics(const char* filename) {
         // Get the current layer ID
         uint layer_id = cur_room->tile_layout_id;
         if (layer_id >= tile_layers.size()) {
-            Log::Error("ERROR: Room %d has tile layer ID %d (only %lu layers exist)\n", i, layer_id, tile_layers.size());
+            Log::Error("Room %d has tile layer ID %d (only %zu layers exist)\n", i, layer_id, tile_layers.size());
             continue;
         }
         cur_room->fg_layer = tile_layers[layer_id].first;
@@ -836,9 +834,9 @@ void Map::LoadMapGraphics(const char* filename) {
 
 
     // Loop through each room to create a single texture from the tile layers
-    for (int i = 0; i < rooms.size(); i++) {
+    for (size_t i = 0; i < rooms.size(); i++) {
 
-        load_status_msg = Utils::FormatString("Converting Layers to Textures ( %02d / %02d ) ...", i, rooms.size());
+        load_status_msg = Utils::FormatString("Converting Layers to Textures (%zu / %zu) ...", i, rooms.size());
 
         Room* cur_room = &rooms[i];
 
@@ -851,10 +849,10 @@ void Map::LoadMapGraphics(const char* filename) {
         if (cur_room->bg_layer.tiles.size() > 0) {
 
             // Loop through each BG tile row
-            for (int y = 0; y < cur_room->bg_layer.height; y++) {
+            for (uint y = 0; y < cur_room->bg_layer.height; y++) {
 
                 // Loop through each tile
-                for (int x = 0; x < cur_room->bg_layer.width; x++) {
+                for (uint x = 0; x < cur_room->bg_layer.width; x++) {
 
                     // Get the index of the tile
                     uint idx = (y * cur_room->bg_layer.width) + x;
@@ -884,10 +882,10 @@ void Map::LoadMapGraphics(const char* filename) {
         // Check if FG exists
         if (cur_room->fg_layer.tiles.size() > 0) {
             // Loop through each FG tile row
-            for (int y = 0; y < cur_room->fg_layer.height; y++) {
+            for (uint y = 0; y < cur_room->fg_layer.height; y++) {
 
                 // Loop through each tile
-                for (int x = 0; x < cur_room->fg_layer.width; x++) {
+                for (uint x = 0; x < cur_room->fg_layer.width; x++) {
 
                     // Get the index of the tile
                     uint idx = (y * cur_room->fg_layer.width) + x;
@@ -949,7 +947,7 @@ void Map::LoadMapGraphics(const char* filename) {
     uint y_max = 0;
 
     // Loop through each room
-    for (int i = 0; i < rooms.size(); i++) {
+    for (size_t i = 0; i < rooms.size(); i++) {
 
         // Check if this was lower than the current minimum X/Y coords
         if (rooms[i].x_start < x_min) {
@@ -974,7 +972,7 @@ void Map::LoadMapGraphics(const char* filename) {
     std::vector<uint> seen_coords;
     std::vector<uint> overlaps;
 
-    for (int i = 0; i < rooms.size(); i++) {
+    for (size_t i = 0; i < rooms.size(); i++) {
 
         Room* cur_room = &rooms[i];
 
