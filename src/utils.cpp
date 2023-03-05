@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <cctype>
 #include <stdlib.h>
 #include <stdio.h>
 #include <GL/glew.h>
@@ -14,7 +16,30 @@
 #include "log.h"
 
 
+/**
+ * Convert a string to lowercase in-place.
+ *
+ * @param str: Input string
+ *
+ * @return String converted to lowercase in-place
+ */
+std::string Utils::toLowerCase(std::string str) {
+    std::transform(str.begin(), str.end(), str.begin(), [](unsigned char c) { return std::tolower(c); });
+    return str;
+}
 
+/**
+ * Return whether a given string is all in lowercase.
+ *
+ * @param str: Input string
+ *
+ * @return True if the input string is all in lowercase
+ */
+bool Utils::isLowerCase(std::string str) {
+
+    std::string tmp = str;
+    return str == Utils::toLowerCase(tmp);
+}
 
 /**
  * Converts a 16-bit RGB1555 value to a 32-bit RGBA value.

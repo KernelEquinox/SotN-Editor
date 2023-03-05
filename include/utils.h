@@ -129,6 +129,8 @@ class Utils {
 
 	public:
 
+		static std::string toLowerCase(std::string str);
+		static bool isLowerCase(std::string str);
 		static uint RGB1555_to_RGBA(ushort color);
 		static ushort RGBA_to_RGB1555(uint color);
 		static GLuint CreateTexture(void* data, int width, int height);
@@ -147,7 +149,7 @@ class Utils {
 
 
 	private:
-    
+
 };
 
 #endif //SOTN_EDITOR_UTILS

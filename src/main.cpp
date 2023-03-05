@@ -446,13 +446,30 @@ void load_map_data(const std::filesystem::path& map_path) {
 
     std::string map_dir = map_path.parent_path().string();
     std::string map_filename = map_path.filename().string();
-    std::string map_gfx_file = map_dir + "/F_" + map_filename;
+    std::string map_gfx_file = "";
+    bool isLowerCase = Utils::isLowerCase(map_filename);
+
+    // Check if the user has selected a map graphics file by accident
+    if (Utils::toLowerCase(map_filename.substr(0, 2)) == "f_") {
+        std::string prefix = isLowerCase ? "f_" : "F_";
+        error = "Files starting with \"" + prefix + "\" are map graphics files.\n"
+            "Please select a proper map data file instead.";
+        // Tell the modal popup that the processing has finished
+        popup.status = PopupStatus_Finished;
+        return;
+    }
+
+    // Try and find the map graphics file, setting the map_gfx_file variable if it was found
+    for (const auto& entry : std::filesystem::directory_iterator(map_dir)) {
+        std::string f = Utils::toLowerCase(entry.path().string());
+        if (f == map_dir + "/f_" + map_filename) {
+            map_gfx_file = entry.path().string();
+            break;
+        }
+    }
 
     // Make sure map graphics file exists in the same directory as the map file itself
-    if (FILE* fp = fopen(map_gfx_file.c_str(), "r")) {
-
-        // Close the file
-        fclose(fp);
+    if (map_gfx_file != "") {
 
         // Initialize the emulator
         if (MipsEmulator::initialized) {
@@ -505,7 +522,11 @@ void load_map_data(const std::filesystem::path& map_path) {
         error.clear();
     }
     else {
-        error = "Could not find graphics file (F_" + map_filename + ").";
+        std::string prefix = isLowerCase ? "f_" : "F_";
+        error = "Could not find graphics file (" + prefix + map_filename + ").";
+        // Tell the modal popup that the processing has finished
+        popup.status = PopupStatus_Finished;
+        return;
     }
 
 
@@ -907,8 +928,8 @@ int main(int, char**)
                 };
                 nfdchar_t* out_path = open_file(filters);
                 if (out_path != nullptr) {
-                    std::string filename = std::filesystem::path(out_path).filename().string();
-                    if (filename == "DRA.BIN") {
+                    std::string filename = Utils::toLowerCase(std::filesystem::path(out_path).filename().string());
+                    if (filename == "dra.bin") {
                         bin_path = out_path;
                         MipsEmulator::SetSotNBinary(bin_path);
                         error.clear();
@@ -948,8 +969,8 @@ int main(int, char**)
                 };
                 nfdchar_t* out_path = open_file(filters);
                 if (out_path != nullptr) {
-                    std::string filename = std::filesystem::path(out_path).filename().string();
-                    if (filename == "F_GAME.BIN") {
+                    std::string filename = Utils::toLowerCase(std::filesystem::path(out_path).filename().string());
+                    if (filename == "f_game.bin") {
                         gfx_path = out_path;
                         error.clear();
                     }
