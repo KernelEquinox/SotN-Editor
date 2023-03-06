@@ -32,6 +32,7 @@ short GteEmulator::LIGHT_MTX[3][3];
 gte_vec3i GteEmulator::BG_COLOR_VEC;
 short GteEmulator::LIGHT_COLOR_MTX[3][3];
 gte_vec3i GteEmulator::FAR_COLOR_VEC;
+short GteEmulator::GARBAGE_MTX[3][3];
 int GteEmulator::OFX;
 int GteEmulator::OFY;
 ushort GteEmulator::H;
@@ -366,10 +367,10 @@ void GteEmulator::WriteDataRegister(uint num, uint value) {
             break;
         case 29:
             Log::Debug(
-        "PC: %08X  % 6d    [!] Attempted to write to ORGB. Please do not do that.\n",
-        MipsEmulator::pc + RAM_BASE_OFFSET,
-        MipsEmulator::num_executed
-    );
+                "PC: %08X  % 6d    [!] Attempted to write to ORGB. Please do not do that.\n",
+                MipsEmulator::pc + RAM_BASE_OFFSET,
+                MipsEmulator::num_executed
+            );
             break;
         case 30:
             LZCS = value;
@@ -386,10 +387,11 @@ void GteEmulator::WriteDataRegister(uint num, uint value) {
             break;
         case 31:
             Log::Debug(
-        "PC: %08X  % 6d    [!] Attempted to write to LZCR. Please do not do that.\n",
-        MipsEmulator::pc + RAM_BASE_OFFSET,
-        MipsEmulator::num_executed
-    );
+                "PC: %08X  % 6d    [!] Attempted to write to LZCR. Please do not do that.\n",
+                MipsEmulator::pc + RAM_BASE_OFFSET,
+                MipsEmulator::num_executed
+            );
+            break;
         default:
             throw std::out_of_range("GTE ERROR: Attempted to write to invalid data register index: " + std::to_string(num));
     }
@@ -1175,6 +1177,20 @@ void GteEmulator::gte_MVMVA(uint lm, uint tv, uint mv, uint mm, uint sf) {
         case 1:     matrix = LIGHT_MTX;        break;
         case 2:     matrix = LIGHT_COLOR_MTX;  break;
         default:                               break;
+    }
+
+    // Failsafe just in case a garbage matrix is selected
+    if (mm == 3) {
+        GARBAGE_MTX[0][0] = -0x60;
+        GARBAGE_MTX[0][1] = 0x60;
+        GARBAGE_MTX[0][2] = IR[0];
+        GARBAGE_MTX[1][0] = ROT_MTX[0][2];
+        GARBAGE_MTX[1][1] = ROT_MTX[0][2];
+        GARBAGE_MTX[1][2] = ROT_MTX[0][2];
+        GARBAGE_MTX[2][0] = ROT_MTX[1][1];
+        GARBAGE_MTX[2][1] = ROT_MTX[1][1];
+        GARBAGE_MTX[2][2] = ROT_MTX[1][1];
+        matrix = GARBAGE_MTX;
     }
 
     // Multiplication vector

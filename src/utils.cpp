@@ -1,5 +1,3 @@
-#include <algorithm>
-#include <cctype>
 #include <stdlib.h>
 #include <stdio.h>
 #include <GL/glew.h>
@@ -7,6 +5,8 @@
 #include <string.h>
 #include <stdexcept>
 #include <cstdarg>
+#include <algorithm>
+#include <cctype>
 #if defined(IMGUI_IMPL_OPENGL_ES2)
 #include <GLES2/gl2.h>
 #endif
@@ -17,7 +17,7 @@
 
 
 /**
- * Convert a string to lowercase in-place.
+ * Converts a string to lowercase in-place.
  *
  * @param str: Input string
  *
@@ -29,15 +29,15 @@ std::string Utils::toLowerCase(std::string str) {
 }
 
 /**
- * Return whether a given string is all in lowercase.
+ * Returns whether a given string is all in lowercase.
  *
  * @param str: Input string
  *
  * @return True if the input string is all in lowercase
  */
-bool Utils::isLowerCase(std::string str) {
+bool Utils::isLowerCase(const std::string& str) {
 
-    std::string tmp = str;
+    const std::string& tmp = str;
     return str == Utils::toLowerCase(tmp);
 }
 
@@ -103,7 +103,6 @@ ushort Utils::RGBA_to_RGB1555(uint color) {
  * @return Buffer containing the RGBA representation of the indexed bytes.
  *
  * @note This is mostly used for OpenGL texture processing.
- *
  */
 byte* Utils::Indexed_to_RGBA(const byte* data, uint num_bytes) {
 
@@ -223,8 +222,11 @@ GLuint Utils::CreateTexture(void* data, int width, int height) {
     // Setup filtering parameters for display
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); // This is required on WebGL for non power-of-two textures
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE); // Same
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    float borderColor[] = { 1.0f, 1.0f, 0.0f, 1.0f };
+    glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
 
     // Upload pixels into texture
 #if defined(GL_UNPACK_ROW_LENGTH) && !defined(__EMSCRIPTEN__)
@@ -334,11 +336,11 @@ void Utils::HexDump(const byte* buf, const uint num_bytes) {
     // Print each byte
     for (int i = 0; i < num_bytes; i++) {
         if (i % 16 == 0) {
-            Log::Debug("\n");
+            printf("\n");
         }
-        Log::Debug("%02X ", *(byte*)(buf + i));
+        printf("%02X ", *(byte*)(buf + i));
     }
-    Log::Debug("\n");
+    printf("\n");
 }
 
 

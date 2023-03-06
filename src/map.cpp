@@ -25,12 +25,35 @@
 
 
 /**
+ * Lerp.
+ *
+ * @param a: Starting value
+ * @param b: Ending value
+ * @param c: Progress between the two points
+ *
+ * @return Interpolate value between the two points
+ */
+static inline byte lerp(byte a, byte b, float c) {
+    return (byte)((float)a + c * (float)(b - a));
+}
+
+
+
+
+
+/**
  * Loads a map file and updates the calling map object with the processed data.
  *
  * @param filename: Filename of the map to load
  *
  */
 void Map::LoadMapFile(const char* filename) {
+
+    // Create a new framebuffer
+    glGenFramebuffers(1, &fbo);
+
+    // Bind to the framebuffer
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
 
     // Set the map ID name
     map_id = std::filesystem::path(filename).stem().string();
@@ -118,16 +141,22 @@ void Map::LoadMapFile(const char* filename) {
     if (room_list_addr > 0) {
         uint i = 0;
         while (*(uint *)(map_data + room_list_addr + i) != 0x00000040) {
+
             // Create a new room
             Room room;
+
+            // Allocate VRAM for the room
+            byte* tmp = (byte*)calloc(512 * 256 * 4, sizeof(byte));
+            room.vram = Utils::CreateTexture(tmp, 512, 256);
+            free(tmp);
 
             // Read the room's properties
             room.x_start = *(map_data + room_list_addr + i++);
             room.y_start = *(map_data + room_list_addr + i++);
             room.x_end = *(map_data + room_list_addr + i++);
             room.y_end = *(map_data + room_list_addr + i++);
-            room.tile_layout_id = *(map_data + room_list_addr + i++);
-            room.load_flag = *(map_data + room_list_addr + i++);
+            room.tile_layer_id = *(map_data + room_list_addr + i++);
+            room.load_flags = *(map_data + room_list_addr + i++);
             room.entity_graphics_id = *(map_data + room_list_addr + i++);
             room.entity_layout_id = *(map_data + room_list_addr + i++);
 
@@ -183,8 +212,8 @@ void Map::LoadMapFile(const char* filename) {
             ClutEntry clut_entry;
 
             // Get the data for each entry in the CLUT list
-            clut_entry.offset = *(uint*)(map_data + clut_list_addr + i) * 2;
-            clut_entry.count = *(uint*)(map_data + clut_list_addr + i + 4) * 2;
+            clut_entry.offset = *(int*)(map_data + clut_list_addr + i) * 2;
+            clut_entry.count = *(int*)(map_data + clut_list_addr + i + 4) * 2;
             uint clut_addr = *(uint*)(map_data + clut_list_addr + i + 8) - MAP_BIN_OFFSET;
 
             // Allocate data for the CLUT
@@ -451,19 +480,21 @@ void Map::LoadMapFile(const char* filename) {
 
     // Loop through each room
     load_status_msg = "Populating Room Data ...";
-    for (size_t i = 0; i < rooms.size(); i++) {
+    for (auto& room : rooms) {
+
+        Room* cur_room = &room;
 
         // Get the layer data only if this is not a transition room
-        if (rooms[i].load_flag == 0xFF) {
+        if (cur_room->load_flags == 0xFF) {
             continue;
         }
 
         // Get the layer data for the room
-        rooms[i].fg_layer = tile_layers[rooms[i].tile_layout_id].first;
-        rooms[i].bg_layer = tile_layers[rooms[i].tile_layout_id].second;
+        cur_room->fg_layer = tile_layers[cur_room->tile_layer_id].first;
+        cur_room->bg_layer = tile_layers[cur_room->tile_layer_id].second;
 
         // Check whether to modify entity graphics ID
-        uint gfx_id = rooms[i].entity_graphics_id;
+        uint gfx_id = cur_room->entity_graphics_id;
         if (gfx_id > 0) {
             gfx_id -= 1;
         }
@@ -472,10 +503,7 @@ void Map::LoadMapFile(const char* filename) {
         std::vector<EntityGraphicsData> entity_graphics_list = entity_graphics[gfx_id];
 
         // Loop through each graphics list entry
-        for (int k = 0; k < entity_graphics_list.size(); k++) {
-
-            // Get the entity graphics data
-            EntityGraphicsData graphics_data = entity_graphics_list[k];
+        for (auto graphics_data : entity_graphics_list) {
 
             // Skip this entry if no data address was defined
             if (graphics_data.compressed_graphics_addr == 0) {
@@ -498,6 +526,21 @@ void Map::LoadMapFile(const char* filename) {
             // Create a texture from the data
             GLuint entity_tileset_texture = Utils::CreateTexture(pixel_data, graphics_data.width / 4, graphics_data.height);
 
+            // Write the texture data to the room's VRAM
+            glBindTexture(GL_TEXTURE_2D, cur_room->vram);
+            glTexSubImage2D(
+                GL_TEXTURE_2D,
+                0,
+                graphics_data.vram_x,
+                graphics_data.vram_y - 256,
+                graphics_data.width / 4,
+                graphics_data.height,
+                GL_RGBA,
+                GL_UNSIGNED_BYTE,
+                pixel_data
+            );
+            glBindTexture(GL_TEXTURE_2D, 0);
+
             // Free data
             free(tileset_data);
             free(pixel_data);
@@ -514,14 +557,56 @@ void Map::LoadMapFile(const char* filename) {
             vram_idx |= (graphics_data.vram_y & 0x80) >> 6;
 
             // Set entity tileset ID
-            rooms[i].entity_tilesets[vram_idx] = entity_tileset_texture;
+            cur_room->entity_tilesets[vram_idx] = entity_tileset_texture;
 
             // Calculate texture page
+            /*
             uint tpage_x = graphics_data.vram_x / 64;
             uint tpage_y = graphics_data.vram_y / 256;
             uint tpage_idx = (tpage_y << 4) + tpage_x;
-            rooms[i].texture_pages[tpage_idx] = entity_tileset_texture;
+            cur_room->texture_pages[tpage_idx] = entity_tileset_texture;
+            */
         }
+
+        // Attach to the target texture and read the pixels into VRAM
+        //glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, cur_room->vram, 0);
+
+        // Convert VRAM to texture pages
+        for (int k = 0; k < 8; k++) {
+
+            byte* pixels = Utils::GetPixels(cur_room->vram, 64 * k, 0, 64, 256);
+
+            // Create page texture from VRAM section
+            GLuint page_texture = Utils::CreateTexture(pixels, 64, 256);
+            cur_room->texture_pages.push_back(page_texture);
+            free(pixels);
+        }
+
+        // Expand VRAM additions to better show
+        const byte greyscale_clut[16 * 4] = {
+            0x00, 0x00, 0x00, 0x00,
+            0x11, 0x11, 0x11, 0xFF,
+            0x22, 0x22, 0x22, 0xFF,
+            0x33, 0x33, 0x33, 0xFF,
+            0x44, 0x44, 0x44, 0xFF,
+            0x55, 0x55, 0x55, 0xFF,
+            0x66, 0x66, 0x66, 0xFF,
+            0x77, 0x77, 0x77, 0xFF,
+            0x88, 0x88, 0x88, 0xFF,
+            0x99, 0x99, 0x99, 0xFF,
+            0xAA, 0xAA, 0xAA, 0xFF,
+            0xBB, 0xBB, 0xBB, 0xFF,
+            0xCC, 0xCC, 0xCC, 0xFF,
+            0xDD, 0xDD, 0xDD, 0xFF,
+            0xEE, 0xEE, 0xEE, 0xFF,
+            0xFF, 0xFF, 0xFF, 0xFF
+        };
+        byte *pixels = Utils::GetPixels(cur_room->vram, 0, 0, 512, 256);
+        byte *rgba_pixels = (byte *) calloc(2048 * 256 * 4, sizeof(byte));
+        Utils::VRAM_to_RGBA(pixels, greyscale_clut, 512, 256, rgba_pixels);
+        cur_room->expanded_vram = Utils::CreateTexture(rgba_pixels, 2048, 256);
+        free(pixels);
+        free(rgba_pixels);
     }
 
 
@@ -565,6 +650,9 @@ void Map::LoadMapFile(const char* filename) {
  */
 void Map::LoadMapGraphics(const char* filename) {
 
+    // Bind to the framebuffer
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+
     // Open the graphics file (F_*.BIN)
     FILE* fp = fopen(filename, "rb");
 
@@ -590,13 +678,14 @@ void Map::LoadMapGraphics(const char* filename) {
 
 
 
-
+    /*
     // Create a new framebuffer
     GLuint fbo;
     glGenFramebuffers(1, &fbo);
 
     // Bind to the framebuffer
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    */
 
 
 
@@ -668,6 +757,31 @@ void Map::LoadMapGraphics(const char* filename) {
     map_vram = vram_texture;
 
 
+    // Expand VRAM additions to better show
+    const byte greyscale_clut[16 * 4] = {
+        0x00, 0x00, 0x00, 0x00,
+        0x11, 0x11, 0x11, 0xFF,
+        0x22, 0x22, 0x22, 0xFF,
+        0x33, 0x33, 0x33, 0xFF,
+        0x44, 0x44, 0x44, 0xFF,
+        0x55, 0x55, 0x55, 0xFF,
+        0x66, 0x66, 0x66, 0xFF,
+        0x77, 0x77, 0x77, 0xFF,
+        0x88, 0x88, 0x88, 0xFF,
+        0x99, 0x99, 0x99, 0xFF,
+        0xAA, 0xAA, 0xAA, 0xFF,
+        0xBB, 0xBB, 0xBB, 0xFF,
+        0xCC, 0xCC, 0xCC, 0xFF,
+        0xDD, 0xDD, 0xDD, 0xFF,
+        0xEE, 0xEE, 0xEE, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF
+    };
+    byte *rgba_pixels = (byte *) calloc(2048 * 256 * 4, sizeof(byte));
+    Utils::VRAM_to_RGBA(vram_data, greyscale_clut, 512, 256, rgba_pixels);
+    expanded_map_vram = Utils::CreateTexture(rgba_pixels, 2048, 256);
+    free(rgba_pixels);
+
+
 
 
 
@@ -727,7 +841,7 @@ void Map::LoadMapGraphics(const char* filename) {
     load_status_msg = "Creating Tile Textures ...";
     for (size_t i = 0; i < tile_layers.size(); i++) {
 
-        load_status_msg = Utils::FormatString("Creating Tile Textures (%zu / %zu) ...", i, tile_layers.size());
+        load_status_msg = Utils::FormatString("Creating Tile Textures ( %zu / %zu ) ...", i, tile_layers.size());
 
         // Loop through each FG/BG layer
         for (int k = 0; k < 2; k++) {
@@ -814,15 +928,16 @@ void Map::LoadMapGraphics(const char* filename) {
 
     // Set each tile layer for each room
     for (size_t i = 0; i < rooms.size(); i++) {
+
         Room* cur_room = &rooms[i];
 
         // Skip transition rooms
-        if (cur_room->load_flag == 0xFF) {
+        if (cur_room->load_flags == 0xFF) {
             continue;
         }
 
         // Get the current layer ID
-        uint layer_id = cur_room->tile_layout_id;
+        uint layer_id = cur_room->tile_layer_id;
         if (layer_id >= tile_layers.size()) {
             Log::Error("Room %d has tile layer ID %d (only %zu layers exist)\n", i, layer_id, tile_layers.size());
             continue;
@@ -836,7 +951,7 @@ void Map::LoadMapGraphics(const char* filename) {
     // Loop through each room to create a single texture from the tile layers
     for (size_t i = 0; i < rooms.size(); i++) {
 
-        load_status_msg = Utils::FormatString("Converting Layers to Textures (%zu / %zu) ...", i, rooms.size());
+        load_status_msg = Utils::FormatString("Converting Layers to Textures ( %zu / %zu ) ...", i, rooms.size());
 
         Room* cur_room = &rooms[i];
 
@@ -881,6 +996,7 @@ void Map::LoadMapGraphics(const char* filename) {
 
         // Check if FG exists
         if (cur_room->fg_layer.tiles.size() > 0) {
+
             // Loop through each FG tile row
             for (uint y = 0; y < cur_room->fg_layer.height; y++) {
 
@@ -924,8 +1040,10 @@ void Map::LoadMapGraphics(const char* filename) {
     // Reset the framebuffer target to the main window
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
+    /*
     // Delete the framebuffer
     glDeleteFramebuffers(1, &fbo);
+    */
 
 
     // Free the file data
@@ -972,9 +1090,9 @@ void Map::LoadMapGraphics(const char* filename) {
     std::vector<uint> seen_coords;
     std::vector<uint> overlaps;
 
-    for (size_t i = 0; i < rooms.size(); i++) {
+    for (auto & room : rooms) {
 
-        Room* cur_room = &rooms[i];
+        Room* cur_room = &room;
 
         // Loop through each Y block
         for (uint y = (cur_room->y_start - y_min); y <= (cur_room->y_end - y_min); y++) {
@@ -1007,39 +1125,40 @@ void Map::LoadMapGraphics(const char* filename) {
  */
 void Map::LoadMapEntities() {
 
+    /*
     // Create a new framebuffer
     GLuint fbo;
     glGenFramebuffers(1, &fbo);
+    */
 
     // Bind to the framebuffer
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
 
     // Process all entity functions
-    for (int i = 0; i < rooms.size(); i++) {
+    for (auto & room : rooms) {
 
         // Get the current room
-        Room *cur_room = &rooms[i];
+        Room* cur_room = &room;
 
         // Get the entity init data
         uint layout_id = cur_room->entity_layout_id;
         std::vector<EntityInitData> init_data_list = entity_layouts[layout_id];
 
         // Reset the emulator
-        MipsEmulator::Reset();
+        //MipsEmulator::Reset();
+        MipsEmulator::LoadState();
+        MipsEmulator::ClearEntities();
 
         // Populate CLUT stuff
-        load_status_msg = "Populating CLUT Data in MIPS RAM ...";
+        //load_status_msg = "Populating CLUT Data in MIPS RAM ...";
         MipsEmulator::ProcessFunction(0x000EAD7C);
 
         // Loop through each entry in the init list
         load_status_msg = "Copying Entity Data to MIPS RAM ...";
-        for (int k = 0; k < init_data_list.size(); k++) {
+        for (auto init_data : init_data_list) {
 
             // Create initial entities
             EntityData entity_data;
-
-            // Get the entity's init data
-            EntityInitData init_data = init_data_list[k];
 
             // Populate initial entity data
             entity_data.object_id = init_data.entity_id & 0x03FF;
@@ -1102,134 +1221,534 @@ void Map::LoadMapEntities() {
         cur_room->entities = entities;
 
         load_status_msg = "Processing Entity Graphics ...";
-        for (int entity_idx = 0; entity_idx < entities.size(); entity_idx++) {
+        for (auto& entity_entry : entities) {
 
             // Get the current entity
-            Entity* entity = &entities[entity_idx];
+            Entity* entity = &entity_entry;
 
-            // Check if the entity has a POLY_GT4 struct
+            // Check if the entity has a SOTN_POLYGON struct
             if (entity->data.unk7C != 0) {
                 //if ((entity->data.unk34 & 0xFFFF) == 0x2000) {
                 if ((entity->data.unk34 & 0x800000) == 0x800000) {
 
                     // Set the current polygon address
-                    uint polygt4_addr = entity->data.unk7C - RAM_BASE_OFFSET;
+                    uint polygon_addr = entity->data.unk7C - RAM_BASE_OFFSET;
 
                     // Loop through all polygons
                     while (true) {
 
                         // Bail if polygon address is invalid
-                        if (polygt4_addr > 0x00200000) {
+                        if (polygon_addr > 0x00200000) {
                             break;
                         }
 
                         // Create a new entity sprite
                         EntitySpritePart entity_subsprite;
 
-                        // Create a POLY_GT4 struct from memory
-                        POLY_GT4 polygon;
-                        MipsEmulator::CopyFromRAM(polygt4_addr, &polygon, sizeof(POLY_GT4));
-                        uint cur_code = polygon.code;
+                        // Create a SOTN_POLYGON struct from memory
+                        SOTN_POLYGON polygon;
+                        MipsEmulator::CopyFromRAM(polygon_addr, &polygon, sizeof(SOTN_POLYGON));
 
-                        // Get the entity texture via the texture page
-                        GLuint texture = 0;
-                        if (polygon.tpage < 0x10) {
-                            if (polygon.tpage >= 8) {
-                                texture = map_tilesets[polygon.tpage - 8];
+                        // Get the polygon type from the code
+                        byte cur_code = polygon.code;
+                        byte polygon_type = SOTN_PRIM_TYPES.at(cur_code);
+
+                        // Set semi-transparent flag
+                        if ((polygon.pad3 & 1) == 1) {
+                            entity_subsprite.semi_transparent = true;
+                        }
+
+                        // Set texture shade flag
+                        if (polygon.pad3 > 0) {
+                            entity_subsprite.shade_texture = true;
+                        }
+
+                        // Determine ordering table index
+                        entity_subsprite.ot_layer = polygon.pad2;
+
+
+
+
+                        // Check if this was a sprite primitive
+                        if (polygon_type == PRIM_TYPE_SPRT) {
+
+                            // Calculate the texture page
+                            uint tpage = polygon.tpage + (polygon.sprt_tpage & 0x60);
+
+                            // Get the width and height of the texture
+                            uint tex_width = polygon.sprt_width;
+                            uint tex_height = polygon.sprt_height;
+
+                            // Get the entity texture via the texture page
+                            GLuint texture = 0;
+                            if (tpage < 0x10) {
+                                if (tpage >= 8) {
+                                    texture = map_tilesets[tpage - 8];
+                                }
+                                else {
+                                    texture = map_tilesets[tpage];
+                                }
                             }
                             else {
-                                texture = map_tilesets[polygon.tpage];
+                                texture = cur_room->texture_pages[tpage - 0x10];
+                            }
+
+                            byte *pixels = Utils::GetPixels(texture, polygon.u0 / 4, polygon.v0, tex_width / 4, tex_height);
+
+                            // Default to generic CLUT
+                            byte* clut;
+
+                            // Get the CLUT's location in VRAM
+                            uint clut_vram_addr = *(ushort*)(MipsEmulator::ram + CLUT_INDEX_ADDR + (polygon.clut * 2)) << 5;
+                            uint clut_y = (clut_vram_addr / 2048) - 240;
+                            uint clut_x = (clut_vram_addr % 2048) / 32;
+
+                            // Check which CLUT to use
+                            if (clut_x < 0x10) {
+                                clut = Utils::GetPixels(generic_cluts_texture, clut_x * 16, clut_y, 16, 1);
+                            }
+                            else if (clut_x < 0x20) {
+                                clut_x = (polygon.clut & 0x0F);
+                                clut = Utils::GetPixels(entity_cluts_texture, clut_x * 16, clut_y, 16, 1);
+                            }
+                            else {
+                                clut_x = (polygon.clut & 0x0F);
+                                clut = Utils::GetPixels(map_vram, clut_x * 16, clut_y + 240, 16, 1);
+                            }
+
+                            // Allocate space for the RGBA image
+                            byte *rgba_pixels = (byte *)calloc(tex_width * tex_height * 4, sizeof(byte));
+
+                            // Expand all pixels by their CLUT components
+                            Utils::VRAM_to_RGBA(pixels, clut, tex_width / 4, tex_height, rgba_pixels);
+                            Utils::HexDump(pixels, tex_width * tex_height * 4);
+                            free(pixels);
+                            free(clut);
+
+                            // Create texture from thingo
+                            GLuint part_texture = Utils::CreateTexture(rgba_pixels, tex_width, tex_height);
+                            entity_subsprite.texture = part_texture;
+                            free(rgba_pixels);
+
+                            // Determine polygon offsets
+                            entity_subsprite.offset_x = polygon.x0;
+                            entity_subsprite.offset_y = polygon.y0;
+
+                            // Determine any texture flipping
+                            entity_subsprite.flip_x = (polygon.x0 > polygon.x1) ^ (polygon.u0 > polygon.u1);
+                            entity_subsprite.flip_y = (polygon.y0 > polygon.y2) ^ (polygon.v0 > polygon.v2);
+
+                            // Get width and height
+                            entity_subsprite.width = polygon.u1;
+                            entity_subsprite.height = polygon.v1;
+                        }
+
+
+
+
+                        // Check if this was a tile primitive
+                        else if (polygon_type == PRIM_TYPE_TILE) {
+
+                            // Get width and height
+                            entity_subsprite.width = polygon.tile_width;
+                            entity_subsprite.height = polygon.tile_height;
+
+                            // Allocate data for the colored rectangle
+                            uint data_len = entity_subsprite.width * entity_subsprite.height * 4;
+                            byte* rgba_pixels = (byte*)calloc(data_len, sizeof(byte));
+
+                            // Fill pixel array with color values
+                            byte alpha = 0xFF;
+                            if (entity_subsprite.semi_transparent) {
+                                alpha = 0x80;
+                            }
+                            for (int idx = 0; idx < data_len; idx += 4) {
+                                rgba_pixels[idx] = polygon.r0;
+                                rgba_pixels[idx + 1] = polygon.g0;
+                                rgba_pixels[idx + 2] = polygon.b0;
+                                rgba_pixels[idx + 3] = alpha;
+                            }
+
+                            // Create texture from pixel data
+                            entity_subsprite.texture = Utils::CreateTexture(rgba_pixels, entity_subsprite.width, entity_subsprite.height);
+                            free(rgba_pixels);
+
+                            // Determine polygon offsets
+                            entity_subsprite.offset_x = polygon.x0;
+                            entity_subsprite.offset_y = polygon.y0;
+                        }
+
+
+
+
+
+                        // Check if this is a 4-sided primitive
+                        else if (polygon_type == PRIM_TYPE_POLYG4 || polygon_type == PRIM_TYPE_POLYGT4) {
+
+                            // Get the leftmost coord
+                            uint left = std::min(polygon.u0, polygon.u1);
+                            uint top = std::min(polygon.v0, polygon.v2);
+
+                            // Get the pixels to write
+                            uint tex_width = (uint)ceil(abs(polygon.u0 - polygon.u3) / 4) * 4;
+                            uint tex_height = (uint)ceil(abs(polygon.v0 - polygon.v3) / 4) * 4;
+
+                            // If U/V isn't set, get the dimensions from X/Y coords
+                            if (tex_width == 0 && tex_height == 0) {
+                                tex_width = (uint)(ceil(abs(polygon.x0 - polygon.x3) / 4) * 4);
+                                tex_height = (uint)(ceil(abs(polygon.y0 - polygon.y3) / 4) * 4);
+                            }
+
+                            // Get the leftmost coord
+                            if (tex_width == 0 && tex_height == 0 /*|| (polygon.u2 == polygon.u3 && polygon.v2 == polygon.v3)*/) {
+                                break;
+                            }
+
+                            // Set entity sprite part data
+                            entity_subsprite.offset_x = std::min(polygon.x0, polygon.x1);
+                            entity_subsprite.offset_y = std::min(polygon.y0, polygon.y2);
+
+                            // Get width from X/Y coords if polygon has defined X/Y coords
+                            if (entity_subsprite.offset_x != 0 || entity_subsprite.offset_y != 0) {
+                                entity_subsprite.override_coords = true;
+                                entity_subsprite.width = abs(polygon.x1 - polygon.x0);
+                                entity_subsprite.height = abs(polygon.y2 - polygon.y0);
+                            }
+                            // Otherwise get it from U/V coords
+                            else {
+                                entity_subsprite.width = abs(polygon.u1 - polygon.u0);
+                                entity_subsprite.height = abs(polygon.v2 - polygon.v0);
+
+                                // Update X/Y to be placed relative to the entity's position
+                                entity_subsprite.offset_x += entity->data.pos_x;
+                                entity_subsprite.offset_y += entity->data.pos_y;
+                            }
+
+                            // Check if this is a POLY_GT4 primitive
+                            if (polygon_type == PRIM_TYPE_POLYGT4) {
+
+                                // Get the entity texture via the texture page
+                                GLuint texture = 0;
+                                if (polygon.tpage < 0x10) {
+                                    if (polygon.tpage >= 8) {
+                                        texture = map_tilesets[polygon.tpage - 8];
+                                    }
+                                    else {
+                                        texture = map_tilesets[polygon.tpage];
+                                    }
+                                }
+                                else {
+                                    texture = cur_room->texture_pages[polygon.tpage - 0x10];
+                                }
+
+                                byte *pixels = Utils::GetPixels(texture, floor(left / 4), top, tex_width / 4, tex_height);
+
+                                // Default to generic CLUT
+                                byte* clut;
+
+                                // Get the CLUT's location in VRAM
+                                uint clut_vram_addr = *(ushort*)(MipsEmulator::ram + CLUT_INDEX_ADDR + (polygon.clut * 2)) << 5;
+                                uint clut_y = (clut_vram_addr / 2048) - 240;
+                                uint clut_x = (clut_vram_addr % 2048) / 32;
+
+                                // Check which CLUT to use
+                                if (clut_x < 0x10) {
+                                    clut = Utils::GetPixels(generic_cluts_texture, clut_x * 16, clut_y, 16, 1);
+                                }
+                                else if (clut_x < 0x20) {
+                                    clut_x = (polygon.clut & 0x0F);
+                                    clut = Utils::GetPixels(entity_cluts_texture, clut_x * 16, clut_y, 16, 1);
+                                }
+                                else {
+                                    clut_x = (polygon.clut & 0x0F);
+                                    clut = Utils::GetPixels(map_vram, clut_x * 16, clut_y + 240, 16, 1);
+                                }
+
+                                // Allocate space for the RGBA image
+                                byte *rgba_pixels = (byte *) calloc(tex_width * tex_height * 4, sizeof(byte));
+
+                                // Expand all pixels by their CLUT components
+                                Utils::VRAM_to_RGBA(pixels, clut, tex_width / 4, tex_height, rgba_pixels);
+                                free(pixels);
+                                free(clut);
+
+                                // Create texture from thingo
+                                GLuint part_texture = Utils::CreateTexture(rgba_pixels, tex_width, tex_height);
+                                entity_subsprite.texture = part_texture;
+                                free(rgba_pixels);
+                            }
+
+                            // Otherwise this was a POLY_G4 primitive
+                            else {
+
+                                // Allocate data for the colored rectangle
+                                uint data_len = entity_subsprite.width * entity_subsprite.height * 4;
+                                byte* rgba_pixels = (byte*)calloc(data_len, sizeof(byte));
+
+                                // Fill pixel array with color values
+                                byte alpha = 0xFF;
+                                if (entity_subsprite.semi_transparent) {
+                                    alpha = 0x80;
+                                }
+
+                                // Loop through each pixel
+                                for (int y = 0; y < entity_subsprite.height; y++) {
+                                    for (int x = 0; x < entity_subsprite.width; x++) {
+
+                                        // Get the current offset within the image
+                                        uint pix_offset = (y * entity_subsprite.width * 4) + (x * 4);
+
+                                        // Get the progress between each axis
+                                        float vert_progress = (float)y / (float)entity_subsprite.height;
+                                        float horiz_progress = (float)x / (float)entity_subsprite.width;
+
+                                        // Find the progress between each color within the rectangle
+                                        byte r1 = lerp(polygon.r0, polygon.r1, horiz_progress);
+                                        byte r2 = lerp(polygon.r3, polygon.r2, horiz_progress);
+                                        byte avg_r = lerp(r1, r2, vert_progress);
+                                        byte g1 = lerp(polygon.g0, polygon.g1, horiz_progress);
+                                        byte g2 = lerp(polygon.g3, polygon.g2, horiz_progress);
+                                        byte avg_g = lerp(g1, g2, vert_progress);
+                                        byte b1 = lerp(polygon.b0, polygon.b1, horiz_progress);
+                                        byte b2 = lerp(polygon.b3, polygon.b2, horiz_progress);
+                                        byte avg_b = lerp(b1, b2, vert_progress);
+
+                                        // Set the pixel values
+                                        rgba_pixels[pix_offset + 0] = avg_r;
+                                        rgba_pixels[pix_offset + 1] = avg_g;
+                                        rgba_pixels[pix_offset + 2] = avg_b;
+                                        rgba_pixels[pix_offset + 3] = alpha;
+                                    }
+                                }
+
+                                /*
+                                for (int idx = 0; idx < data_len; idx += 4) {
+                                    rgba_pixels[idx] = 0xFF;
+                                    rgba_pixels[idx + 1] = 0xFF;
+                                    rgba_pixels[idx + 2] = 0xFF;
+                                    rgba_pixels[idx + 3] = alpha;
+                                }
+                                */
+
+                                // Create texture from pixel data
+                                entity_subsprite.texture = Utils::CreateTexture(rgba_pixels, entity_subsprite.width, entity_subsprite.height);
+                                free(rgba_pixels);
+                            }
+
+                            // Determine any texture flipping
+                            entity_subsprite.flip_x = (polygon.x0 > polygon.x1) ^ (polygon.u0 > polygon.u1);
+                            entity_subsprite.flip_y = (polygon.y0 > polygon.y2) ^ (polygon.v0 > polygon.v2);
+
+                            // Check if polygon should be skewed
+                            if (polygon.x0 != polygon.x2) {
+                                entity_subsprite.bottom_left.x = polygon.x2 - polygon.x0;
+                            }
+                            if (polygon.y0 != polygon.y1) {
+                                entity_subsprite.top_right.y = polygon.y1 - polygon.y0;
+                            }
+                            if (polygon.x1 != polygon.x3) {
+                                entity_subsprite.bottom_right.x = polygon.x3 - polygon.x1;
+                            }
+                            if (polygon.y2 != polygon.y3) {
+                                entity_subsprite.bottom_right.y = polygon.y3 - polygon.y2;
+                            }
+                            if (polygon.x0 != polygon.x2 || polygon.y0 != polygon.y1 || polygon.x1 != polygon.x3 || polygon.y2 != polygon.y3) {
+                                entity_subsprite.skew = true;
                             }
                         }
-                        else {
-                            texture = cur_room->texture_pages[polygon.tpage];
+
+
+
+
+                        // Check if this was a DR_ENV thing
+                        // TODO: Do something with the drawenv
+                        else if (polygon_type == PRIM_TYPE_DRENV) {
+
+                            // Get the address of the DR_ENV structure
+                            uint addr = (polygon.b1 << 16) | (polygon.g1 << 8) | polygon.r1;
+
+                            // Grab DR_ENV data from RAM
+                            DR_ENV* dr_env = (DR_ENV*)(MipsEmulator::ram + (polygon.drenv_addr - RAM_BASE_OFFSET));
+
+                            // Allocate a new DRAWENV
+                            DRAWENV drawenv;
+
+                            // Loop through each code
+                            for (int idx = 0; idx < 15; idx++) {
+
+                                // Get the current DRAWENV code
+                                uint code = dr_env->code[idx];
+
+                                // Get the code type from the code
+                                byte code_type = (code >> 24) & 0xFF;
+
+                                switch (code_type) {
+                                    case 0xE1:
+                                        drawenv.tpage = code & 0x1FF;
+                                        drawenv.dfe = ((code & 0x400) == 0x400 ? 1 : 0);
+                                        drawenv.dtd = ((code & 0x200) == 0x200 ? 1 : 0);
+                                        break;
+                                    case 0xE2:
+                                        drawenv.tw.w = (code & 0x1F) << 3;
+                                        drawenv.tw.h = ((code >> 5) & 0x1F) << 3;
+                                        drawenv.tw.x = ((code >> 10) & 0x1F) << 3;
+                                        drawenv.tw.y = ((code >> 15) & 0x1F) << 3;
+                                        break;
+                                    case 0xE3:
+                                        drawenv.clip.x = code & 0xFFF;
+                                        drawenv.clip.y = (code >> 0xC) & 0xFFF;
+                                        break;
+                                    case 0xE4:
+                                        drawenv.clip.w = (code & 0xFFF) - drawenv.clip.x + 1;
+                                        drawenv.clip.h = ((code >> 0xC) & 0xFFF) - drawenv.clip.y + 1;
+                                        break;
+                                    case 0xE5:
+                                        drawenv.ofs[0] = code & 0xFFF;
+                                        drawenv.ofs[1] = (code >> 0xC) & 0xFFF;
+                                        break;
+                                    case 0xE6:
+                                    default:
+                                        break;
+                                }
+                            }
                         }
 
-                        // Get the leftmost coord
-                        uint left = std::min(polygon.u0, polygon.u1);
-                        uint top = std::min(polygon.v0, polygon.v2);
 
-                        // Get the pixels to write
-                        uint width = (uint)ceil(abs(polygon.u0 - polygon.u3) / 4) * 4;
-                        uint height = (uint)ceil(abs(polygon.v0 - polygon.v3) / 4) * 4;
 
-                        // Get the leftmost coord
-                        if (width == 0 && height == 0 || (polygon.u2 == polygon.u3 && polygon.v2 == polygon.v3)) {
-                            break;
+
+                        // Check if this was a 3-sided primitive
+                        else if (polygon_type == PRIM_TYPE_POLYGT3) {
+
+                            // Get the leftmost coord
+                            byte left = std::min(polygon.u0, polygon.u1);
+                            left = std::min(left, polygon.u2);
+                            byte top = std::min(polygon.v0, polygon.v1);
+                            top = std::min(top, polygon.v2);
+                            byte right = std::max(polygon.u0, polygon.u1);
+                            right = std::max(right, polygon.u2);
+                            byte bottom = std::max(polygon.v0, polygon.v1);
+                            bottom = std::max(bottom, polygon.v2);
+
+                            // Get the pixels to write
+                            uint tex_width = (uint)ceil(abs(left - right) / 4) * 4;
+                            uint tex_height = (uint)ceil(abs(top - bottom) / 4) * 4;
+
+                            // Set entity sprite part data
+                            short min_x = std::min(polygon.x0, polygon.x1);
+                            min_x = std::min(min_x, polygon.x2);
+                            short min_y = std::min(polygon.y0, polygon.y1);
+                            min_y = std::min(min_y, polygon.y2);
+                            short max_x = std::max(polygon.x0, polygon.x1);
+                            max_x = std::max(max_x, polygon.x2);
+                            short max_y = std::max(polygon.y0, polygon.y1);
+                            max_y = std::max(max_y, polygon.y2);
+
+                            // If U/V isn't set, get the dimensions from X/Y coords
+                            if (tex_width == 0 && tex_height == 0) {
+                                tex_width = (uint)(ceil(abs(max_x - min_x) / 4) * 4);
+                                tex_height = (uint)(ceil(abs(max_y - min_y) / 4) * 4);
+                            }
+
+                            // Get the leftmost coord
+                            if (tex_width == 0 && tex_height == 0 /*|| (polygon.u2 == polygon.u3 && polygon.v2 == polygon.v3)*/) {
+                                break;
+                            }
+
+                            entity_subsprite.offset_x = min_x;
+                            entity_subsprite.offset_y = min_y;
+
+                            // Get width from X/Y coords if polygon has defined X/Y coords
+                            if (entity_subsprite.offset_x != 0 || entity_subsprite.offset_y != 0) {
+                                entity_subsprite.override_coords = true;
+                                entity_subsprite.width = abs(max_x - min_x);
+                                entity_subsprite.height = abs(max_y - min_y);
+                            }
+                                // Otherwise get it from U/V coords
+                            else {
+                                entity_subsprite.width = abs(left - right);
+                                entity_subsprite.height = abs(top - bottom);
+
+                                // Update X/Y to be placed relative to the entity's position
+                                entity_subsprite.offset_x += entity->data.pos_x;
+                                entity_subsprite.offset_y += entity->data.pos_y;
+                            }
+
+                            // Get the entity texture via the texture page
+                            GLuint texture = 0;
+                            if (polygon.tpage < 0x10) {
+                                if (polygon.tpage >= 8) {
+                                    texture = map_tilesets[polygon.tpage - 8];
+                                }
+                                else {
+                                    texture = map_tilesets[polygon.tpage];
+                                }
+                            }
+                            else {
+                                texture = cur_room->texture_pages[polygon.tpage - 0x10];
+                            }
+
+                            byte *pixels = Utils::GetPixels(texture, floor(left / 4), top, right / 4, bottom);
+
+                            // Default to generic CLUT
+                            byte* clut;
+
+                            // Get the CLUT's location in VRAM
+                            uint clut_vram_addr = *(ushort*)(MipsEmulator::ram + CLUT_INDEX_ADDR + (polygon.clut * 2)) << 5;
+                            uint clut_y = (clut_vram_addr / 2048) - 240;
+                            uint clut_x = (clut_vram_addr % 2048) / 32;
+
+                            // Check which CLUT to use
+                            if (clut_x < 0x10) {
+                                clut = Utils::GetPixels(generic_cluts_texture, clut_x * 16, clut_y, 16, 1);
+                            }
+                            else if (clut_x < 0x20) {
+                                clut_x = (polygon.clut & 0x0F);
+                                clut = Utils::GetPixels(entity_cluts_texture, clut_x * 16, clut_y, 16, 1);
+                            }
+                            else {
+                                clut_x = (polygon.clut & 0x0F);
+                                clut = Utils::GetPixels(map_vram, clut_x * 16, clut_y + 240, 16, 1);
+                            }
+
+                            // Allocate space for the RGBA image
+                            byte *rgba_pixels = (byte *) calloc(tex_width * tex_height * 4, sizeof(byte));
+
+                            // Expand all pixels by their CLUT components
+                            Utils::VRAM_to_RGBA(pixels, clut, tex_width / 4, tex_height, rgba_pixels);
+                            free(pixels);
+                            free(clut);
+
+                            // Create texture from thingo
+                            GLuint part_texture = Utils::CreateTexture(rgba_pixels, tex_width, tex_height);
+                            entity_subsprite.texture = part_texture;
+                            free(rgba_pixels);
                         }
 
-                        byte *pixels = Utils::GetPixels(texture, floor(left / 4), top, width / 4, height);
 
-                        // Default to generic CLUT
-                        byte* clut;
 
-                        // Get the CLUT's location in VRAM
-                        uint clut_vram_addr = *(ushort*)(MipsEmulator::ram + CLUT_INDEX_ADDR + (polygon.clut * 2)) << 5;
-                        uint clut_y = (clut_vram_addr / 2048) - 240;
-                        uint clut_x = (clut_vram_addr % 2048) / 32;
 
-                        // Check which CLUT to use
-                        if (clut_x < 0x10) {
-                            clut = Utils::GetPixels(generic_cluts_texture, clut_x * 16, clut_y, 16, 1);
-                        }
-                        else if (clut_x < 0x20) {
-                            clut_x = (polygon.clut & 0x0F);
-                            clut = Utils::GetPixels(entity_cluts_texture, clut_x * 16, clut_y, 16, 1);
-                        }
-                        else {
-                            clut_x = (polygon.clut & 0x0F);
-                            clut = Utils::GetPixels(map_vram, clut_x * 16, clut_y + 240, 16, 1);
+                        // Check if this was a line primitive
+                        else if (polygon_type == PRIM_TYPE_LINEG2) {
+
+                            // Do nothing
                         }
 
-                        // Set entity sprite part data
-                        entity_subsprite.offset_x = std::min(polygon.x0, polygon.x1);
-                        entity_subsprite.offset_y = std::min(polygon.y0, polygon.y2);
 
-                        // Get width from X/Y coords if polygon has defined X/Y coords
-                        if (entity_subsprite.offset_x != 0 || entity_subsprite.offset_y != 0) {
-                            entity_subsprite.override_coords = true;
-                            entity_subsprite.width = abs(polygon.x1 - polygon.x0);
-                            entity_subsprite.height = abs(polygon.y2 - polygon.y0);
-                        }
-                        // Otherwise get it from U/V coords
-                        else {
-                            entity_subsprite.width = abs(polygon.u1 - polygon.u0);
-                            entity_subsprite.height = abs(polygon.v2 - polygon.v0);
 
-                            // Update X/Y to be placed relative to the entity's position
-                            entity_subsprite.offset_x += entity->data.pos_x;
-                            entity_subsprite.offset_y += entity->data.pos_y;
-                        }
+
 
                         // Set sprite's absolute coords
                         entity_subsprite.x = entity_subsprite.offset_x;
                         entity_subsprite.y = entity_subsprite.offset_y;
-
-                        // Allocate space for the RGBA image
-                        byte *rgba_pixels = (byte *) calloc(width * height * 4, sizeof(byte));
-
-                        // Expand all pixels by their CLUT components
-                        Utils::VRAM_to_RGBA(pixels, clut, width / 4, height, rgba_pixels);
-                        free(pixels);
-                        free(clut);
-
-                        // Create texture from thingo
-                        GLuint part_texture = Utils::CreateTexture(rgba_pixels, width, height);
-                        entity_subsprite.texture = part_texture;
-                        free(rgba_pixels);
-
-                        // Determine any texture flipping
-                        entity_subsprite.flip_x = (polygon.x0 > polygon.x1) ^ (polygon.u0 > polygon.u1);
-                        entity_subsprite.flip_y = (polygon.y0 > polygon.y2) ^ (polygon.v0 > polygon.v2);
-
-                        // Determine transformations
-                        entity_subsprite.rotate = entity->data.rotation;
 
                         // Set anchor point for transformations
                         uint hitbox_width = (entity->data.hitbox_width > 0 ? entity->data.hitbox_width : 16);
                         uint hitbox_height = (entity->data.hitbox_height > 0 ? entity->data.hitbox_height : 16);
                         entity_subsprite.anchor_x = entity->data.pos_x + (hitbox_width / 2);
                         entity_subsprite.anchor_y = entity->data.pos_y + (hitbox_height / 2);
+
+                        // Determine transformations
+                        entity_subsprite.rotate = entity->data.rotation;
 
                         // Determine blend mode
                         if ((entity->data.blend_mode & BLEND_MODE_UNK70) == BLEND_MODE_UNK70) {
@@ -1239,25 +1758,9 @@ void Map::LoadMapEntities() {
                             entity_subsprite.blend_mode = BLEND_MODE_LIGHTEN;
                         }
 
-                        // Determine ordering table index
-                        entity_subsprite.ot_layer = polygon.pad2;
 
-                        // Check if polygon should be skewed
-                        if (polygon.x0 != polygon.x2) {
-                            entity_subsprite.bottom_left.x = polygon.x2 - polygon.x0;
-                        }
-                        if (polygon.y0 != polygon.y1) {
-                            entity_subsprite.top_right.y = polygon.y1 - polygon.y0;
-                        }
-                        if (polygon.x1 != polygon.x3) {
-                            entity_subsprite.bottom_right.x = polygon.x3 - polygon.x1;
-                        }
-                        if (polygon.y2 != polygon.y3) {
-                            entity_subsprite.bottom_right.y = polygon.y3 - polygon.y2;
-                        }
-                        if (polygon.x0 != polygon.x2 || polygon.y0 != polygon.y1 || polygon.x1 != polygon.x3 || polygon.y2 != polygon.y3) {
-                            entity_subsprite.skew = true;
-                        }
+
+
 
                         // Add the polygon to the sprite
                         entity_subsprite.polygon = polygon;
@@ -1271,7 +1774,7 @@ void Map::LoadMapEntities() {
                         }
 
                         // Otherwise set the tag to the new target address
-                        polygt4_addr = polygon.tag - RAM_BASE_OFFSET;
+                        polygon_addr = polygon.tag - RAM_BASE_OFFSET;
                     }
 
                     // Reverse the textures
@@ -1304,7 +1807,7 @@ void Map::LoadMapEntities() {
                     image.offset_y = -12;
 
                     // Attach to the tileset
-                    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, fgame_textures[6], 0);
+                    //glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, fgame_textures[6], 0);
 
                     // Set entity sprite part data
                     entity_subsprite.offset_x = image.offset_x;
@@ -1317,6 +1820,8 @@ void Map::LoadMapEntities() {
                     entity_subsprite.y = entity_subsprite.offset_y + entity->data.pos_y;
 
                     // Read the candle image from VRAM
+                    byte* pixels = Utils::GetPixels(fgame_textures[6], 0x80 / 4, 0x80, image.width / 4, image.height);
+                    /*
                     byte* pixels = (byte*)calloc((image.width / 4) * image.height * 4, sizeof(byte));
                     glReadBuffer(GL_COLOR_ATTACHMENT0);
                     glReadPixels(
@@ -1324,6 +1829,7 @@ void Map::LoadMapEntities() {
                             image.width / 4, image.height,
                             GL_RGBA, GL_UNSIGNED_BYTE, pixels
                     );
+                    */
 
                     // Get the CLUT offset
                     uint clut_offset = CANDLE_CLUT * 16 * 4;
@@ -1406,9 +1912,9 @@ void Map::LoadMapEntities() {
                         }
 
                         byte* pixels = Utils::GetPixels(
-                                fgame_textures[6],
-                                (0x80 + x_coord) / 4, (0x80 + y_coord),
-                                image.width / 4, image.height
+                            fgame_textures[6],
+                            (0x80 + x_coord) / 4, (0x80 + y_coord),
+                            image.width / 4, image.height
                         );
 
                         // Set entity sprite part data
@@ -1607,7 +2113,7 @@ void Map::LoadMapEntities() {
                     uint relic_id = data & 0xFFFF;
 
                     // Attach to the tileset
-                    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, item_textures[relic_id], 0);
+                    //glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, item_textures[relic_id], 0);
 
                     // Set entity sprite part data
                     entity_subsprite.offset_x = image.offset_x;
@@ -1620,6 +2126,8 @@ void Map::LoadMapEntities() {
                     entity_subsprite.y = entity_subsprite.offset_y + entity->data.pos_y;
 
                     // Read the candle image from VRAM
+                    byte* pixels = Utils::GetPixels(item_textures[relic_id], 0, 0, image.width / 4, image.height);
+                    /*
                     byte* pixels = (byte*)calloc((image.width / 4) * image.height * 4, sizeof(byte));
                     glReadBuffer(GL_COLOR_ATTACHMENT0);
                     glReadPixels(
@@ -1627,6 +2135,7 @@ void Map::LoadMapEntities() {
                             image.width / 4, image.height,
                             GL_RGBA, GL_UNSIGNED_BYTE, pixels
                     );
+                    */
 
                     // Get the CLUT offset
                     uint clut_offset = clut_id * 16 * 4;
@@ -1726,13 +2235,13 @@ void Map::LoadMapEntities() {
                             SpritePart image = sprite.parts[m];
 
                             // Get the tileset index
-                            uint tileset_idx = (image.texture_page % 0x20) / 4;
+                            uint tileset_idx = (image.tileset_offset % 0x20) / 4;
 
                             // Get the entity tileset (accounting for texture page)
                             GLuint entity_tileset = map_tilesets[tileset_idx];
 
                             // Attach to the tileset
-                            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, entity_tileset, 0);
+                            //glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, entity_tileset, 0);
 
                             // Set entity sprite part data
                             entity_subsprite.offset_x = image.offset_x;
@@ -1745,6 +2254,9 @@ void Map::LoadMapEntities() {
                             entity_subsprite.y = entity_subsprite.offset_y + entity->data.pos_y;
 
                             // Read the image from VRAM
+
+                            byte* pixels = Utils::GetPixels(entity_tileset, image.texture_start_x / 4, image.texture_start_y, image.width / 4, image.height);
+                            /*
                             byte* pixels = (byte*)calloc((image.width / 4) * image.height * 4, sizeof(byte));
                             glReadBuffer(GL_COLOR_ATTACHMENT0);
                             glReadPixels(
@@ -1752,12 +2264,15 @@ void Map::LoadMapEntities() {
                                     image.width / 4, image.height,
                                     GL_RGBA, GL_UNSIGNED_BYTE, pixels
                             );
+                            */
 
                             // Calculate the CLUT coordinates in VRAM
                             uint clut_offset_x = (image.clut_offset & 0x0F) * 16;
                             uint clut_offset_y = (image.clut_offset >> 4) & 0x0F;
 
                             // Directly pull the RGBA CLUT data from VRAM
+                            byte* rgba_clut = Utils::GetPixels(map_vram, clut_offset_x, 240 + clut_offset_y, 16, 1);
+                            /*
                             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, map_vram, 0);
                             byte* rgba_clut = (byte*)calloc(16 * 4, sizeof(byte));
                             glReadBuffer(GL_COLOR_ATTACHMENT0);
@@ -1766,6 +2281,7 @@ void Map::LoadMapEntities() {
                                     16, 1,
                                     GL_RGBA, GL_UNSIGNED_BYTE, rgba_clut
                             );
+                            */
 
 
                             // Allocate space for the RGBA image
@@ -1776,13 +2292,40 @@ void Map::LoadMapEntities() {
                             free(pixels);
                             free(rgba_clut);
 
-                            // Check if pixels have any transparency
+                            // Check if pixels should be filled
+                            bool r_fill, g_fill, b_fill;
+                            if (entity->data.transform_flags & EntityTransform_Fill) {
+                                // Get RGB values
+                                r_fill = (entity->data.transform_flags & EntityTransform_Red) == EntityTransform_Red;
+                                g_fill = (entity->data.transform_flags & EntityTransform_Green) == EntityTransform_Green;
+                                b_fill = (entity->data.transform_flags & EntityTransform_Blue) == EntityTransform_Blue;
+                            }
+
+                            // Check if pixels have any transparency or fill
                             for (int z = 0; z < image.width * image.height; z++) {
                                 byte alpha = *(byte*)(rgba_pixels + (z * 4) + 3);
                                 // Flag the sprite as being blendable
-                                if (alpha == 0x80) {
+                                if (alpha == 0x80 && entity->data.blend_mode > 0) {
                                     entity_subsprite.blend = true;
                                 }
+                            }
+
+                            // Loop through each pixel
+                            for (int z = 0; z < image.width * image.height; z++) {
+                                // Destroy any partial alpha values if no blending is enabled
+                                if (!entity_subsprite.blend) {
+                                    if (*(byte*)(rgba_pixels + (z * 4) + 3) == 0x80) {
+                                        *(byte*)(rgba_pixels + (z * 4) + 3) = 0xFF;
+                                    }
+                                }
+                                /*
+                                // Otherwise apply fill data if any exists
+                                else if ((entity->data.transform_flags & EntityTransform_Fill) == EntityTransform_Fill) {
+                                    *(byte*)(rgba_pixels + (z * 4) + 0) = r_fill * 0xFF;
+                                    *(byte*)(rgba_pixels + (z * 4) + 1) = g_fill * 0xFF;
+                                    *(byte*)(rgba_pixels + (z * 4) + 2) = b_fill * 0xFF;
+                                }
+                                */
                             }
 
                             // Create texture from thingo
@@ -1829,10 +2372,10 @@ void Map::LoadMapEntities() {
                             SpritePart image = sprite.parts[m];
 
                             // Get the entity tileset (accounting for texture page)
-                            GLuint entity_tileset = cur_room->entity_tilesets[entity->data.tileset + image.texture_page];
+                            GLuint entity_tileset = cur_room->entity_tilesets[entity->data.tileset + image.tileset_offset];
 
                             // Attach to the tileset
-                            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, entity_tileset, 0);
+                            //glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, entity_tileset, 0);
 
                             // Set entity sprite part data
                             entity_subsprite.offset_x = image.offset_x;
@@ -1845,6 +2388,8 @@ void Map::LoadMapEntities() {
                             entity_subsprite.y = entity_subsprite.offset_y + entity->data.pos_y;
 
                             // Read the image from VRAM
+                            byte* pixels = Utils::GetPixels(entity_tileset, image.texture_start_x / 4, image.texture_start_y, image.width / 4, image.height);
+                            /*
                             byte* pixels = (byte*)calloc((image.width / 4) * image.height * 4, sizeof(byte));
                             glReadBuffer(GL_COLOR_ATTACHMENT0);
                             glReadPixels(
@@ -1852,11 +2397,18 @@ void Map::LoadMapEntities() {
                                 image.width / 4, image.height,
                                 GL_RGBA, GL_UNSIGNED_BYTE, pixels
                             );
+                            */
 
                             // Select the appropriate CLUT
-                            uint clut_offset = ((entity->data.clut_index * 32) + (image.clut_offset * 32)) & 0x7FFF;
+                            uint clut_offset = entity->data.clut_index;
+                            if (clut_offset < 0x8000) {
+                                clut_offset += image.clut_offset;
+                            }
+                            else {
+                                clut_offset &= 0x7FFF;
+                            }
                             byte* clut = (byte*)calloc(32, sizeof(byte));
-                            MipsEmulator::CopyFromRAM(CLUT_BASE_ADDR + clut_offset, clut, 32);
+                            MipsEmulator::CopyFromRAM(CLUT_BASE_ADDR + (clut_offset * 32), clut, 32);
 
                             // Allocate space for the RGBA image
                             byte* rgba_pixels = (byte*)calloc(image.width * image.height * 4, sizeof(byte));
@@ -1873,7 +2425,16 @@ void Map::LoadMapEntities() {
                             free(pixels);
                             free(rgba_clut);
 
-                            // Check if pixels have any transparency
+                            // Check if pixels should be filled
+                            bool r_fill, g_fill, b_fill;
+                            if (entity->data.transform_flags & EntityTransform_Fill) {
+                                // Get RGB values
+                                r_fill = (entity->data.transform_flags & EntityTransform_Red) == EntityTransform_Red;
+                                g_fill = (entity->data.transform_flags & EntityTransform_Green) == EntityTransform_Green;
+                                b_fill = (entity->data.transform_flags & EntityTransform_Blue) == EntityTransform_Blue;
+                            }
+
+                            // Check if pixels have any transparency or fill
                             for (int z = 0; z < image.width * image.height; z++) {
                                 byte alpha = *(byte*)(rgba_pixels + (z * 4) + 3);
                                 // Flag the sprite as being blendable
@@ -1882,13 +2443,22 @@ void Map::LoadMapEntities() {
                                 }
                             }
 
-                            // Destroy any partial alpha values if no blending is enabled
-                            if (!entity_subsprite.blend) {
-                                for (int z = 0; z < image.width * image.height; z++) {
+                            // Loop through each pixel
+                            for (int z = 0; z < image.width * image.height; z++) {
+                                // Destroy any partial alpha values if no blending is enabled
+                                if (!entity_subsprite.blend) {
                                     if (*(byte*)(rgba_pixels + (z * 4) + 3) == 0x80) {
                                         *(byte*)(rgba_pixels + (z * 4) + 3) = 0xFF;
                                     }
                                 }
+                                /*
+                                // Otherwise apply fill data if any exists
+                                else if ((entity->data.transform_flags & EntityTransform_Fill) == EntityTransform_Fill) {
+                                    *(byte*)(rgba_pixels + (z * 4) + 0) = r_fill * 0xFF;
+                                    *(byte*)(rgba_pixels + (z * 4) + 1) = g_fill * 0xFF;
+                                    *(byte*)(rgba_pixels + (z * 4) + 2) = b_fill * 0xFF;
+                                }
+                                */
                             }
 
                             // Create texture from thingo
@@ -1989,7 +2559,7 @@ void Map::LoadMapEntities() {
                         }
 
                         // Attach to the tileset
-                        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, entity_tileset, 0);
+                        //glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, entity_tileset, 0);
 
                         // Set entity sprite part data
                         entity_subsprite.offset_x = image.offset_x;
@@ -2002,6 +2572,8 @@ void Map::LoadMapEntities() {
                         entity_subsprite.y = entity_subsprite.offset_y + entity->data.pos_y;
 
                         // Read the image from VRAM
+                        byte* pixels = Utils::GetPixels(entity_tileset, tex_start_x / 4, tex_start_y, image.width / 4, image.height);
+                        /*
                         byte* pixels = (byte*)calloc((image.width / 4) * image.height * 4, sizeof(byte));
                         glReadBuffer(GL_COLOR_ATTACHMENT0);
                         glReadPixels(
@@ -2009,6 +2581,7 @@ void Map::LoadMapEntities() {
                             image.width / 4, image.height,
                             GL_RGBA, GL_UNSIGNED_BYTE, pixels
                         );
+                        */
 
                         // Get the CLUT offset from the generic clut address
                         uint clut_offset = (image.clut_offset % 256) * 16 * 4;
@@ -2023,6 +2596,15 @@ void Map::LoadMapEntities() {
                         Utils::VRAM_to_RGBA(pixels, rgba_clut, image.width / 4, image.height, rgba_pixels);
                         free(pixels);
 
+                        // Check if pixels should be filled
+                        bool r_fill, g_fill, b_fill;
+                        if (entity->data.transform_flags & EntityTransform_Fill) {
+                            // Get RGB values
+                            r_fill = (entity->data.transform_flags & EntityTransform_Red) == EntityTransform_Red;
+                            g_fill = (entity->data.transform_flags & EntityTransform_Green) == EntityTransform_Green;
+                            b_fill = (entity->data.transform_flags & EntityTransform_Blue) == EntityTransform_Blue;
+                        }
+
                         // Check if pixels have any transparency
                         for (int z = 0; z < image.width * image.height; z++) {
                             byte alpha = *(byte*)(rgba_pixels + (z * 4) + 3);
@@ -2032,13 +2614,22 @@ void Map::LoadMapEntities() {
                             }
                         }
 
-                        // Destroy any partial alpha values if no blending is enabled
-                        if (!entity_subsprite.blend) {
-                            for (int z = 0; z < image.width * image.height; z++) {
+                        // Loop through each pixel
+                        for (int z = 0; z < image.width * image.height; z++) {
+                            // Destroy any partial alpha values if no blending is enabled
+                            if (!entity_subsprite.blend) {
                                 if (*(byte*)(rgba_pixels + (z * 4) + 3) == 0x80) {
                                     *(byte*)(rgba_pixels + (z * 4) + 3) = 0xFF;
                                 }
                             }
+                            /*
+                            // Otherwise apply fill data if any exists
+                            else if ((entity->data.transform_flags & EntityTransform_Fill) == EntityTransform_Fill) {
+                                *(byte*)(rgba_pixels + (z * 4) + 0) = r_fill * 0xFF;
+                                *(byte*)(rgba_pixels + (z * 4) + 1) = g_fill * 0xFF;
+                                *(byte*)(rgba_pixels + (z * 4) + 2) = b_fill * 0xFF;
+                            }
+                            */
                         }
 
                         // Create texture from thingo
@@ -2080,11 +2671,11 @@ void Map::LoadMapEntities() {
                 EntitySpritePart* cur_sprite = &entity->sprites[k];
 
                 // Check if sprite should be added to the background ordering table
-                if (cur_sprite->ot_layer < OT_BG_TILE_LAYER) {
+                if (cur_sprite->ot_layer < cur_room->bg_layer.z_index) {
                     cur_room->bg_ordering_table[cur_sprite->ot_layer].push_back(*cur_sprite);
                 }
                 // Check if sprite should be added to the middle ordering table
-                else if (cur_sprite->ot_layer < OT_FG_TILE_LAYER) {
+                else if (cur_sprite->ot_layer < cur_room->fg_layer.z_index) {
                     cur_room->mid_ordering_table[cur_sprite->ot_layer].push_back(*cur_sprite);
                 }
                 // Otherwise add the sprite to the foreground ordering table
@@ -2102,8 +2693,10 @@ void Map::LoadMapEntities() {
     // Reset the framebuffer target to the main window
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
+    /*
     // Delete the framebuffer
     glDeleteFramebuffers(1, &fbo);
+    */
 }
 
 
@@ -2133,6 +2726,11 @@ void Map::Cleanup() {
         // Free all allocated layer memory
         free(cur_room->fg_layer.tile_indices);
         free(cur_room->bg_layer.tile_indices);
+
+        // Delete VRAM stuff
+        cur_room->texture_pages.clear();
+        glDeleteTextures(1, &cur_room->vram);
+        glDeleteTextures(1, &cur_room->expanded_vram);
     }
 
     // Free all tile data pointers
@@ -2204,8 +2802,20 @@ void Map::Cleanup() {
     entity_graphics.clear();
 
 
+    // Clear out map tile CLUTs
+    memset(map_tile_cluts[0], 256 * 16 * 2, sizeof(byte));
+
+
     // Delete everything else
     map_textures.clear();
     map_tilesets.clear();
     entity_functions.clear();
+
+    // Reset the framebuffer target to the main window
+    //glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    // Delete the framebuffer
+    if (loaded) {
+        glDeleteFramebuffers(1, &fbo);
+    }
 }

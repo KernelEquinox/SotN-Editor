@@ -89,6 +89,12 @@ class TileLayer {
         // Drawing flags
         ushort drawing_flags = 0;
 
+        // 800730A0 flags:
+        //     01 00 = Show FG
+        //     80 00 = Transparency
+        //     00 01 = Use different tiles?
+        //     00 02 = Use different CLUTs?
+
         // List of tile objects
         std::vector<Tile> tiles = {};
 

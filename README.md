@@ -89,11 +89,78 @@ This will create the program in the `build/Debug/` directory.
 
 ## Known Issues
 
-* Some rooms overlap each other
-* Some sprites utilizing POLY_GT4 structs display on top of other rooms
-* The lever in NO1 (Outer Wall) has a mismatched CLUT
-* Room 9 in DAI (Royal Chapel) has weird texture/POLY_GT4 oddities
-* More accurate POLY_GT4 handling is required
-* Oddities in ST0 need to be analyzed (no breakables in Room 1 or Room 3, weird Richter thing, etc.)
-* Rocks in WRP don't show up
-* Other things I'm forgetting
+<details>
+  <summary>List of issues</summary>
+   
+* Sprites for the Venus Weed family of enemies only display one half of the sprite.
+* Hellfire Beast's hands for the lightning animation are shown.
+* Blue doors don't show up.
+* Segmented enemies (e.g. Hammer, Blade, Gurkha, Plate Lord) don't have subsprites attached correctly.
+* The charge sprite for the Nova Skeleton's beam is always shown. It looks bad.
+* Azaghal's sword is shown twice. Not a bug, it's just ugly.
+* Some areas only show water for the first square of larger rooms. This is normal and expected, but it doesn't look good.
+* DAI: Opening another map before opening DAI causes the chapel's ceiling arches to discolor.
+* DAI: Overlap on room 13 and room 1.
+* DAI: Overlap on room 13 and room 2.
+* DAI: Overlap on room 13 and room 6.
+* DAI: Overlap on room 13 and room 7.
+* DAI: Overlap on room 13 and room 10.
+* DAI: Overlap on room 14 and room 2.
+* DAI: Overlap on room 14 and room 3.
+* DAI: Overlap on room 17 and room 5.
+* DAI: Overlap on room 17 and room 15.
+* DAI: Overlap on room 17 and room 16.
+* LIB: Some stray black boxes are shown and aren't correctly placed.
+* LIB: The background of the area in room 9 near the Ectoplasm enemies isn't tiled.
+* NO0: Certain candles in certain rooms don't appear for some reason.
+* NO0: The statues and clock parts in room 9 aren't shadowed correctly. Some of sprites should have `BlendMode_Dark` applied to them, but doing so causes other sprites in other maps to have incorrect shading applied.
+* NO0: Stone Rose does not appear.
+* NO2: Polygons have incorrect textures applied at the top-left of room 8.
+* NO3: The large door at the castle entrance is repeated directly underneath its normal position.
+* NO3: Water parts are separated oddly.
+* NO3: An extra chain part is displayed in front of the large stone near the top of room 15.
+* NO4: Waterfall texture does not extend all the way down in room 26. (Possibly intentional?)
+* NO4: Pulleys to lift the boat are not displayed in room 25.
+* NP3: The large door at the castle entrance is repeated directly underneath its normal position.
+* NP3: Water parts are separated oddly.
+* NP3: Slogra does not show up alongside Gaibon.
+* NZ0: Cannon is flipped the wrong way in room 4.
+* NZ1: Overlap on room 1 and room 3.
+* NZ1: Overlap on room 6 and room 9.
+* RDAI: Overlap on room 13 and room 1.
+* RDAI: Overlap on room 13 and room 2.
+* RDAI: Overlap on room 13 and room 6.
+* RDAI: Overlap on room 13 and room 7.
+* RDAI: Overlap on room 13 and room 10.
+* RDAI: Overlap on room 14 and room 2.
+* RDAI: Overlap on room 14 and room 3.
+* RDAI: Overlap on room 17 and room 5.
+* RDAI: Overlap on room 17 and room 15.
+* RDAI: Overlap on room 17 and room 16.
+* RDAI: Back of room 9 is colored cyan and should have windows flipped vertically. One of the ceiling arches isn't properly placed.
+* RDAI: Candle located in room 11 at (635, 1748), which is slightly outside the playable area. Not a bug, just a neat fact.
+* RLIB: Some stray black boxes are shown and aren't correctly placed.
+* RLIB: The background of the area located at the top-left of room 9 isn't tiled.
+* RLIB: The desk in room 4 isn't flipped (rotated) properly. -- FIXED
+* RNO0: Certain candles in certain rooms don't appear for some reason.
+* RNO0: The statues and clock parts in room 9 aren't shadowed correctly. Some of sprites should have `BlendMode_Dark` applied to them, but doing so causes other sprites in other maps to have incorrect shading applied.
+* RNO2: Polygons have incorrect textures applied at the top-left of room 8.
+* RNO3: Candle located in room 12 at (184, 5772), which is far below the playable area. Not a bug, just a neat fact.
+* RNO3: Water parts are separated oddly.
+* RNO4: Waterfall texture does not extend all the way down in room 26. (Possibly intentional?)
+* RNO4: Gradients for the waterfall mist display oddly in room 26.
+* RNZ1: Overlap on room 1 and room 3.
+* RNZ1: Overlap on room 6 and room 9.
+* RTOP: Triangle polygon for the clock tower isn't rendered. This is included as a TODO in `main.cpp`.
+* RWRP: Each room has a black square covering the warp keyhole.
+* ST0: Breakable entities don't appear in room 1 or room 3.
+* TOP: Triangle polygon for the clock tower isn't rendered. This is included as a TODO in `main.cpp`.
+* WRP: Each room has a black square covering the warp keyhole.
+* WRP: Rocks don't show up on the floors of the rooms.
+* BO6: Richter isn't shown.
+* BO7: Odd rotated texture in the background.
+* MAR: The statues and clock parts aren't shadowed correctly. Some of sprites should have `BlendMode_Dark` applied to them, but doing so causes other sprites in other maps to have incorrect shading applied.
+* RBO6: Dracula's larger left wing (viewer's right) isn't flipped correctly.
+* RBO8: Galamoth.
+   
+</details>

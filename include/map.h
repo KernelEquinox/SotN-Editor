@@ -82,6 +82,7 @@ class Map {
 
         // Map VRAM
         GLuint map_vram;
+        GLuint expanded_map_vram;
 
         // Map tilesets
         std::vector<GLuint> map_tilesets;
@@ -95,6 +96,9 @@ class Map {
         // Dimensions
         uint width;
         uint height;
+
+        // Framebuffer object for OpenGL stuff
+        GLuint fbo;
 
 
 

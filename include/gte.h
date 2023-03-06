@@ -97,6 +97,7 @@ class GteEmulator {
         static gte_vec3i BG_COLOR_VEC;
         static short LIGHT_COLOR_MTX[3][3];
         static gte_vec3i FAR_COLOR_VEC;
+        static short GARBAGE_MTX[3][3];
         static int OFX;
         static int OFY;
         static ushort H;

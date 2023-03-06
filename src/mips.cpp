@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <memory.h>
+#include <stdexcept>
 #include "common.h"
 #include "mips.h"
 #include "entities.h"
@@ -15,6 +16,7 @@ uint MipsEmulator::registers[32];
 uint MipsEmulator::pc;
 uint MipsEmulator::num_executed;
 byte* MipsEmulator::ram;
+byte* MipsEmulator::save_state_ram;
 byte* MipsEmulator::scratchpad;
 byte* MipsEmulator::psx_bin;
 byte* MipsEmulator::sotn_bin;
@@ -25,6 +27,8 @@ uint MipsEmulator::map_data_size;
 byte* MipsEmulator::clut_data;
 uint MipsEmulator::hi;
 uint MipsEmulator::lo;
+bool MipsEmulator::force_ret;
+bool MipsEmulator::ret_hit;
 GLuint MipsEmulator::framebuffer;
 bool MipsEmulator::debug;
 bool MipsEmulator::initialized;
@@ -116,6 +120,12 @@ void MipsEmulator::LoadMapFile(const char* filename) {
     // Read the file
     fread(map_data, sizeof(byte), map_data_size, fp);
     fclose(fp);
+
+    // Copy map data to RAM
+    memcpy(ram + MAP_RAM_OFFSET, map_data, map_data_size);
+
+    // Copy first 16 pointers of the map file to the pointer table
+    memcpy(ram + SOTN_PTR_TBL_ADDR, ram + MAP_RAM_OFFSET, 16 * 4);
 }
 
 
@@ -140,6 +150,32 @@ void MipsEmulator::StoreMapCLUT(uint offset, uint count, byte* data) {
 
 
 /**
+ * Clears out the MIPS registers and resets number of executed instructions.
+ */
+void MipsEmulator::ClearRegisters() {
+
+    // Clear out the registers
+    for (uint i = 0; i < 32; i++)
+    {
+        registers[i] = 0;
+    }
+
+    // Clear out HI and LO registers
+    hi = 0;
+    lo = 0;
+
+    // Clear out PC and number of executed instructions
+    pc = 0;
+    num_executed = 0;
+
+    // Set RA delimiter to flag when execution has returned from the initial function
+    registers[RA] = FUNCTION_RETURN;
+    registers[SP] = 0x001FFFC0;
+}
+
+
+
+/**
  * Initializes the MIPS emulator.
  *
  * @note This should only ever be called once.
@@ -150,7 +186,8 @@ void MipsEmulator::Initialize() {
     Log::Debug("--- MIPS INIT ---\n");
 
     // Initialize 2 MB of PSX memory
-    ram = (byte*)calloc(0x200000, sizeof(byte));
+    ram = (byte*)calloc(RAM_SIZE, sizeof(byte));
+    save_state_ram = (byte*)calloc(SAVE_STATE_SIZE, sizeof(byte));
 
     // Initialize 1 KB of scratchpad memory
     scratchpad = (byte*)calloc(1024, sizeof(byte));
@@ -184,7 +221,8 @@ void MipsEmulator::Reset() {
     Log::Debug("--- MIPS RESET ---\n");
 
     // Clear out RAM
-    memset(ram, 0, 0x200000);
+    memset(ram, 0, RAM_SIZE);
+    memset(save_state_ram, 0, SAVE_STATE_SIZE);
 
     // Zero out scratchpad
     memset(scratchpad, 0, 1024);
@@ -204,28 +242,56 @@ void MipsEmulator::Reset() {
     memcpy(ram + SOTN_PTR_TBL_ADDR, ram + MAP_RAM_OFFSET, 16 * 4);
 
     // Clear out the registers
-    for (uint i = 0; i < 32; i++)
-    {
-        registers[i] = 0;
-    }
-
-    // Clear out HI and LO registers
-    hi = 0;
-    lo = 0;
-
-    // Clear out PC and number of executed instructions
-    pc = 0;
-    num_executed = 0;
-
-    // Set RA delimiter to flag when execution has returned from the initial function
-    registers[RA] = FUNCTION_RETURN;
-    registers[SP] = 0x001FFFC0;
+    ClearRegisters();
 
     // Test
     MipsEmulator::WriteIntToRAM(0x00097408, 0x94);
 
     // Initialize the GTE emulator
     GteEmulator::Initialize();
+
+    // Run the SotN initialization functions
+    InitSotNBinary();
+}
+
+
+
+/**
+ * Runs the DRA.BIN initialization functions.
+ */
+void MipsEmulator::InitSotNBinary() {
+
+    // Skip the first instruction
+    //
+    //     800E3988     sub         SP,0x28
+    //
+    uint start_addr = MAIN_FUNC_ADDR + 4;
+    ProcessFunction(start_addr, MAIN_FUNC_LOOP_ADDR);
+}
+
+
+
+/**
+ * Saves the current state of the emulator.
+ */
+void MipsEmulator::SaveState() {
+
+    // Backup the state
+    memcpy(save_state_ram, ram, SAVE_STATE_SIZE);
+}
+
+
+
+/**
+ * Loads the state of the emulator at the time of the most recent save state.
+ */
+void MipsEmulator::LoadState() {
+
+    // Restore save state
+    memcpy(ram, save_state_ram, SAVE_STATE_SIZE);
+
+    // Clear out the registers
+    ClearRegisters();
 }
 
 
@@ -396,17 +462,26 @@ void MipsEmulator::ProcessOpcode(uint opcode)
  * Processes all opcodes within a MIPS function.
  *
  * @param func_addr: Address of the function in MIPS RAM
+ * @param end_addr: (Optional) End address to stop processing and immediately return
+ *
+ * @note The SP, etc. registers will not be cleaned up if end_addr is specified.
  *
  */
-void MipsEmulator::ProcessFunction(uint func_addr)
+void MipsEmulator::ProcessFunction(uint func_addr, uint end_addr)
 {
     // Set PC to the function address
     int x = 0;
     pc = func_addr;
-    Log::Debug("MipsEmulator::ProcessFunction(0x%08X)\n", func_addr);
+    Log::Debug("MipsEmulator::ProcessFunction(0x%08X)\n", func_addr + RAM_BASE_OFFSET);
 
     // Process function opcodes until RA indicates that the target function returning
-    while (pc != FUNCTION_RETURN && x < MAX_EXECUTIONS) {
+    while (pc != FUNCTION_RETURN && x < MAX_EXECUTIONS && !ret_hit) {
+
+        // Check if the end address was hit (and check if PC == 0)
+        if (pc == end_addr) {
+            Log::Debug("End address hit [0x%08X]\n", end_addr + RAM_BASE_OFFSET);
+            break;
+        }
 
         // Grab the next opcode
         uint opcode = *(uint*)(ram + pc);
@@ -414,13 +489,70 @@ void MipsEmulator::ProcessFunction(uint func_addr)
         // Just bail if the opcode is a dummy function
         if (opcode == 0xFFFEFFFE) {
             Log::Debug("Skipping function [dummy]\n");
-            break;
+            //break;
+            opcode = INST_JR_RA;
+        }
+
+        // Instantly return for SsVab thing
+        if (pc == SS_VAB_WAIT_ADDR) {
+            registers[V0] = 0;
+        }
+
+        // Skip long functions
+        if (pc == SS_VAB_WAIT_ADDR || pc == SETUP_AUDIO_ADDR || pc == VSYNC_ADDR || pc == DRAWSYNC_ADDR || pc == STARTINTR_ADDR || pc == DMA_CALLBACK_ADDR) {
+            opcode = INST_JR_RA;
+            force_ret = true;
+        }
+
+        // Process _addque2
+        if (pc == ADDQUE_ADDR) {
+
+            // _addque2 runs A0(A1, A3)
+            uint func_addr = registers[A0] - RAM_BASE_OFFSET;
+            uint reg_A1 = registers[A1];
+            uint reg_A3 = registers[A3];
+
+            // Set registers
+            registers[A2] = reg_A3;
+
+            // Backup the RA register and set it to trigger a return from this function
+            // (In other words, make this not recurse infinitely)
+            uint prev_ra = registers[RA];
+            registers[RA] = FUNCTION_RETURN;
+
+            // Process the function
+            ProcessFunction(func_addr);
+
+            // Restore RA and return immediately
+            registers[RA] = prev_ra;
+            opcode = INST_JR_RA;
+
+            /*
+            // Adjust values if needed
+            if ((reg_A1 & 0x1F800000) == 0x1F800000) {
+                reg_A1 -= 0x1F800000;
+            }
+            if ((reg_A3 & 0x1F800000) == 0x1F800000) {
+                reg_A3 -= 0x1F800000;
+            }
+
+            // Check if address is in RAM
+            if (reg_A1 >= RAM_BASE_OFFSET && reg_A1 < RAM_MAX_OFFSET) {
+                reg_A1 -= RAM_BASE_OFFSET;
+            }
+            if (reg_A3 >= RAM_BASE_OFFSET && reg_A3 < RAM_MAX_OFFSET) {
+                reg_A3 -= RAM_BASE_OFFSET;
+            }
+            */
         }
 
         // Execute the opcode
         ProcessOpcode(opcode);
         x += 1;
     }
+
+    // Reset top-level return flag
+    ret_hit = false;
 }
 
 
@@ -468,6 +600,10 @@ std::vector<Entity> MipsEmulator::ProcessEntities() {
     // Initialize vector of entities
     std::vector<Entity> entities;
 
+    // Set Alucard Z depth for entities that use it
+    EntityData* ALUCARD = (EntityData*)(ram + ALUCARD_ENTITY_ADDR);
+    ALUCARD->z_depth = 0x94;
+
     // Loop through each entity in RAM
     for (int i = 0; i < 0xC0; i++) {
 
@@ -476,8 +612,9 @@ std::vector<Entity> MipsEmulator::ProcessEntities() {
 
         // Create entity data structure from existent RAM data
         EntityData* entity_data = (EntityData*)(ram + cur_offset);
-        // Copy entity data to Alucard data
-        memcpy(ram + ALUCARD_ENTITY_ADDR, ram + cur_offset, sizeof(EntityData));
+
+        // Copy entity data to Alucard data for relative entity placement
+        //memcpy(ram + ALUCARD_ENTITY_ADDR, ram + cur_offset, sizeof(EntityData));
 
         // Check if update function exists
         if (entity_data->update_function > 0x80180000 && entity_data->update_function < RAM_MAX_OFFSET) {
@@ -544,12 +681,55 @@ std::vector<Entity> MipsEmulator::ProcessEntities() {
         // Populate entity data map
         entity.PopulateDataMap();
 
+        /*
+        // Keep track of any polygons detected
+        bool has_polygons = false;
+        POLY_GT4* polygon_addr = nullptr;
+
+        // Check if any polygon ID references exist
+        if (entity_data->polygon_id > 0) {
+            polygon_addr = (POLY_GT4*)(ram + POLYGT4_LIST_ADDR + (sizeof(POLY_GT4) * entity_data->polygon_id));
+            has_polygons = true;
+        }
+
+        // Check if any direct polygon references exist
+        if (entity_data->unk7C > 0x80000000) {
+            polygon_addr = (POLY_GT4*)(ram + (entity_data->unk7C - RAM_BASE_OFFSET));
+            has_polygons = true;
+        }
+
+        // Check if entity has polygon data
+        if (has_polygons) {
+            // Process all polygons
+            while (true) {
+                // Copy polygon data in RAM to a new POLY_GT4 struct to prevent polygon overwrites
+                POLY_GT4 polygon;
+                memcpy(&polygon, polygon_addr, sizeof(POLY_GT4));
+
+            }
+        }
+        */
+
         // Add the entity to the list
         entities.push_back(entity);
     }
 
     // Return the entity data
     return entities;
+}
+
+
+
+/**
+ * Clears all entities currently loaded in MIPS RAM.
+ */
+void MipsEmulator::ClearEntities() {
+
+    // Get the starting address of entity data
+    byte* entity_data = (ram + ENTITY_ALLOCATION_START);
+
+    // Wipe all the data
+    memset(entity_data, 0, 0xC0 * sizeof(EntityData));
 }
 
 
@@ -1031,8 +1211,8 @@ void MipsEmulator::i_lb(uint src_index, uint dst_index, short imm) {
     // Check if address to load is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
-    } else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET
-            && (src & 0x1F800000) != 0x1F800000) {
+    }
+    else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET && (src & 0x1F800000) != 0x1F800000) {
         Log::Error("Tried to read out of bounds address.\n"
             "PC: %08X  % 6d    "
             "Load byte from %s (%08X) + %04X (=%08X) into %s"
@@ -1047,19 +1227,27 @@ void MipsEmulator::i_lb(uint src_index, uint dst_index, short imm) {
             register_names[dst_index],
             registers[dst_index]
         );
-
         return;
     }
+
+    // Set source buffer (MIPS RAM by default)
+    byte* src_buf = ram;
 
     // Fetch from scratchpad memory or MCTRL1, IO ports, etc.
     if ((src & 0x1F800000) == 0x1F800000) {
         src -= 0x1F800000;
-        registers[dst_index] = (int)*(char*)(scratchpad + src + imm);
+        src_buf = scratchpad;
     }
-    // Fetch from RAM
-    else {
-        registers[dst_index] = (int)*(char*)(ram + src + imm);
+
+    /*
+    // Failsafe for OOB reads
+    if (src + imm > MAX_RAM_ADDR) {
+        throw std::out_of_range("MIPS ERROR: Attempted to read from invalid memory region: " + std::to_string(src + imm + RAM_BASE_OFFSET));
     }
+    */
+
+    // Fetch from buffer
+    registers[dst_index] = (int)*(char*)(src_buf + src + imm);
 
     Log::Debug(
         "PC: %08X  % 6d    "
@@ -1084,8 +1272,8 @@ void MipsEmulator::i_lh(uint src_index, uint dst_index, short imm) {
     // Check if address to load is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
-    } else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET
-            && (src & 0x1F800000) != 0x1F800000) {
+    }
+    else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET && (src & 0x1F800000) != 0x1F800000) {
         Log::Error("Tried to read out of bounds address.\n"
             "PC: %08X  % 6d    "
             "Load short from %s (%08X) + %04X (=%08X) into %s"
@@ -1100,19 +1288,27 @@ void MipsEmulator::i_lh(uint src_index, uint dst_index, short imm) {
             register_names[dst_index],
             registers[dst_index]
         );
-
         return;
     }
+
+    // Set source buffer (MIPS RAM by default)
+    byte* src_buf = ram;
 
     // Fetch from scratchpad memory or MCTRL1, IO ports, etc.
     if ((src & 0x1F800000) == 0x1F800000) {
         src -= 0x1F800000;
-        registers[dst_index] = (int)*(short*)(scratchpad + src + imm);
+        src_buf = scratchpad;
     }
-    // Fetch from RAM
-    else {
-        registers[dst_index] = (int)*(short*)(ram + src + imm);
+
+    /*
+    // Failsafe for OOB reads
+    if (src + imm > MAX_RAM_ADDR) {
+        throw std::out_of_range("MIPS ERROR: Attempted to read from invalid memory region: " + std::to_string(src + imm + RAM_BASE_OFFSET));
     }
+    */
+
+    // Fetch from buffer
+    registers[dst_index] = (int)*(short*)(src_buf + src + imm);
 
     Log::Debug(
         "PC: %08X  % 6d    "
@@ -1137,8 +1333,8 @@ void MipsEmulator::i_lwl(uint src_index, uint dst_index, short imm) {
     // Check if address to load is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
-    } else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET
-            && (src & 0x1F800000) != 0x1F800000) {
+    }
+    else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET && (src & 0x1F800000) != 0x1F800000) {
         Log::Error("Tried to read out of bounds address.\n"
             "PC: %08X  % 6d    "
             "Load word (LEFT) from %s (%08X) + %04X (=%08X) into %s"
@@ -1153,19 +1349,27 @@ void MipsEmulator::i_lwl(uint src_index, uint dst_index, short imm) {
             register_names[dst_index],
             registers[dst_index]
         );
-
         return;
     }
 
-    // Fetch from scratchpad memory or MCTRL1, IO ports, etc. (adjusted so that the target address is the lowest order byte)
+    // Set source buffer (MIPS RAM by default)
+    byte* src_buf = ram;
+
+    // Fetch from scratchpad memory or MCTRL1, IO ports, etc.
     if ((src & 0x1F800000) == 0x1F800000) {
         src -= 0x1F800000;
-        registers[dst_index] = *(uint*)(scratchpad + src + imm - 3);
+        src_buf = scratchpad;
     }
-    // Fetch from RAM (adjusted so that the target address is the lowest order byte)
-    else {
-        registers[dst_index] = *(uint*)(ram + src + imm - 3);
+
+    /*
+    // Failsafe for OOB reads
+    if (src + imm > MAX_RAM_ADDR) {
+        throw std::out_of_range("MIPS ERROR: Attempted to read from invalid memory region: " + std::to_string(src + imm + RAM_BASE_OFFSET));
     }
+    */
+
+    // Fetch from buffer
+    registers[dst_index] = *(uint*)(src_buf + src + imm - 3);
 
     Log::Debug(
         "PC: %08X  % 6d    "
@@ -1190,8 +1394,17 @@ void MipsEmulator::i_lw(uint src_index, uint dst_index, short imm) {
     // Check if address to load is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
-    } else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET
-            && (src & 0x1F800000) != 0x1F800000) {
+    }
+
+    // Set source buffer (MIPS RAM by default)
+    byte* src_buf = ram;
+
+    // Fetch from scratchpad memory or MCTRL1, IO ports, etc.
+    if ((src & 0x1F800000) == 0x1F800000) {
+        src -= 0x1F800000;
+        src_buf = scratchpad;
+    }
+    else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET && (src & 0x1F800000) != 0x1F800000) {
         Log::Error("Tried to read out of bounds address.\n"
             "PC: %08X  % 6d    "
             "Load word from %s (%08X) + %04X (=%08X) into %s"
@@ -1206,19 +1419,18 @@ void MipsEmulator::i_lw(uint src_index, uint dst_index, short imm) {
             register_names[dst_index],
             registers[dst_index]
         );
-
         return;
     }
 
-    // Fetch from scratchpad memory or MCTRL1, IO ports, etc.
-    if ((src & 0x1F800000) == 0x1F800000) {
-        src -= 0x1F800000;
-        registers[dst_index] = *(uint*)(scratchpad + src + imm);
+    /*
+    // Failsafe for OOB reads
+    if (src + imm > MAX_RAM_ADDR) {
+        throw std::out_of_range("MIPS ERROR: Attempted to read from invalid memory region: " + std::to_string(src + imm + RAM_BASE_OFFSET));
     }
-    // Fetch from RAM
-    else {
-        registers[dst_index] = *(uint*)(ram + src + imm);
-    }
+    */
+
+    // Fetch from buffer
+    registers[dst_index] = *(uint*)(src_buf + src + imm);
 
     Log::Debug(
         "PC: %08X  % 6d    "
@@ -1243,8 +1455,17 @@ void MipsEmulator::i_lbu(uint src_index, uint dst_index, short imm) {
     // Check if address to load is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
-    } else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET
-            && (src & 0x1F800000) != 0x1F800000) {
+    }
+
+    // Set source buffer (MIPS RAM by default)
+    byte* src_buf = ram;
+
+    // Fetch from scratchpad memory or MCTRL1, IO ports, etc.
+    if ((src & 0x1F800000) == 0x1F800000) {
+        src -= 0x1F800000;
+        src_buf = scratchpad;
+    }
+    else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET && (src & 0x1F800000) != 0x1F800000) {
         Log::Error("Tried to read out of bounds address.\n"
             "PC: %08X  % 6d    "
             "Load byte (unsigned) from %s (%08X) + %04X (=%08X) into %s"
@@ -1259,19 +1480,18 @@ void MipsEmulator::i_lbu(uint src_index, uint dst_index, short imm) {
             register_names[dst_index],
             registers[dst_index]
         );
-
         return;
     }
 
-    // Fetch from scratchpad memory or MCTRL1, IO ports, etc.
-    if ((src & 0x1F800000) == 0x1F800000) {
-        src -= 0x1F800000;
-        registers[dst_index] = (int)*(byte*)(scratchpad + src + imm);
+    /*
+    // Failsafe for OOB reads
+    if (src + imm > MAX_RAM_ADDR) {
+        throw std::out_of_range("MIPS ERROR: Attempted to read from invalid memory region: " + std::to_string(src + imm + RAM_BASE_OFFSET));
     }
-    // Fetch from RAM
-    else {
-        registers[dst_index] = (int)*(byte*)(ram + src + imm);
-    }
+    */
+
+    // Fetch from buffer
+    registers[dst_index] = (int)*(byte*)(src_buf + src + imm);
 
     Log::Debug(
         "PC: %08X  % 6d    "
@@ -1296,8 +1516,8 @@ void MipsEmulator::i_lhu(uint src_index, uint dst_index, short imm) {
     // Check if address to load is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
-    } else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET
-            && (src & 0x1F800000) != 0x1F800000) {
+    }
+    else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET && (src & 0x1F800000) != 0x1F800000) {
         Log::Error("Tried to read out of bounds address.\n"
             "PC: %08X  % 6d    "
             "Load short (unsigned) from %s (%08X) + %04X (=%08X) into %s"
@@ -1312,19 +1532,27 @@ void MipsEmulator::i_lhu(uint src_index, uint dst_index, short imm) {
             register_names[dst_index],
             registers[dst_index]
         );
-
         return;
     }
 
+    // Set source buffer (MIPS RAM by default)
+    byte* src_buf = ram;
+
     // Fetch from scratchpad memory or MCTRL1, IO ports, etc.
-    if ((src & 0xFFFF0000) == 0x1F800000) {
+    if ((src & 0x1F800000) == 0x1F800000) {
         src -= 0x1F800000;
-        registers[dst_index] = (int)*(ushort*)(scratchpad + src + imm);
+        src_buf = scratchpad;
     }
-    // Fetch from RAM
-    else {
-        registers[dst_index] = (int)*(ushort*)(ram + src + imm);
+
+    /*
+    // Failsafe for OOB reads
+    if (src + imm > MAX_RAM_ADDR) {
+        throw std::out_of_range("MIPS ERROR: Attempted to read from invalid memory region: " + std::to_string(src + imm + RAM_BASE_OFFSET));
     }
+    */
+
+    // Fetch from buffer
+    registers[dst_index] = (int)*(ushort*)(src_buf + src + imm);
 
     Log::Debug(
         "PC: %08X  % 6d    "
@@ -1349,8 +1577,8 @@ void MipsEmulator::i_lwr(uint src_index, uint dst_index, short imm) {
     // Check if address to load is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
-    } else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET
-            && (src & 0x1F800000) != 0x1F800000) {
+    }
+    else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET && (src & 0x1F800000) != 0x1F800000) {
         Log::Error("Tried to read out of bounds address.\n"
             "PC: %08X  % 6d    "
             "Load word (RIGHT) from %s (%08X) + %04X (=%08X) into %s"
@@ -1365,19 +1593,27 @@ void MipsEmulator::i_lwr(uint src_index, uint dst_index, short imm) {
             register_names[dst_index],
             registers[dst_index]
         );
-
         return;
     }
+
+    // Set source buffer (MIPS RAM by default)
+    byte* src_buf = ram;
 
     // Fetch from scratchpad memory or MCTRL1, IO ports, etc.
     if ((src & 0x1F800000) == 0x1F800000) {
         src -= 0x1F800000;
-        registers[dst_index] = *(uint*)(scratchpad + src + imm);
+        src_buf = scratchpad;
     }
-    // Fetch from RAM
-    else {
-        registers[dst_index] = *(uint*)(ram + src + imm);
+
+    /*
+    // Failsafe for OOB reads
+    if (src + imm > MAX_RAM_ADDR) {
+        throw std::out_of_range("MIPS ERROR: Attempted to read from invalid memory region: " + std::to_string(src + imm + RAM_BASE_OFFSET));
     }
+    */
+
+    // Fetch from buffer
+    registers[dst_index] = (int)*(char*)(src_buf + src + imm);
 
     Log::Debug(
         "PC: %08X  % 6d    "
@@ -1402,8 +1638,8 @@ void MipsEmulator::i_sb(uint src_index, uint dst_index, short imm) {
     // Check if store address is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
-    } else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET
-            && (src & 0x1F800000) != 0x1F800000) {
+    }
+    else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET && (src & 0x1F800000) != 0x1F800000) {
         Log::Error("Tried to write to out of bounds address.\n"
             "PC: %08X  % 6d    "
             "Store byte %s (%02X) at %s %08X + %04X (=%08X)"
@@ -1419,20 +1655,27 @@ void MipsEmulator::i_sb(uint src_index, uint dst_index, short imm) {
             src + imm + RAM_BASE_OFFSET,
             registers[dst_index]
         );
-
         return;
     }
+
+    // Set destination buffer (MIPS RAM by default)
+    byte* dst_buf = ram;
 
     // Store in scratchpad memory or MCTRL1, IO ports, etc.
     if ((src & 0x1F800000) == 0x1F800000) {
         src -= 0x1F800000;
-        *(byte*)(scratchpad + src + imm) = registers[dst_index];
+        dst_buf = scratchpad;
     }
 
-    // Store in RAM
-    else {
-        *(byte*)(ram + src + imm) = registers[dst_index];
+    /*
+    // Failsafe for OOB writes
+    if (src + imm > MAX_RAM_ADDR) {
+        throw std::out_of_range("MIPS ERROR: Attempted to write to invalid memory region: " + std::to_string(src + imm + RAM_BASE_OFFSET));
     }
+    */
+
+    // Store in buffer
+    *(byte*)(dst_buf + src + imm) = registers[dst_index];
 
     Log::Debug(
         "PC: %08X  % 6d    "
@@ -1458,8 +1701,8 @@ void MipsEmulator::i_sh(uint src_index, uint dst_index, short imm) {
     // Check if store address is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
-    } else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET
-            && (src & 0x1F800000) != 0x1F800000) {
+    }
+    else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET && (src & 0x1F800000) != 0x1F800000) {
         Log::Error("Tried to write to out of bounds address.\n"
             "PC: %08X  % 6d    "
             "Store short %s (%04X) at %s %08X + %04X (=%08X)"
@@ -1475,19 +1718,27 @@ void MipsEmulator::i_sh(uint src_index, uint dst_index, short imm) {
             src + imm + RAM_BASE_OFFSET,
             registers[dst_index]
         );
-
         return;
     }
+
+    // Set destination buffer (MIPS RAM by default)
+    byte* dst_buf = ram;
 
     // Store in scratchpad memory or MCTRL1, IO ports, etc.
     if ((src & 0x1F800000) == 0x1F800000) {
         src -= 0x1F800000;
-        *(short*)(scratchpad + src + imm) = registers[dst_index];
+        dst_buf = scratchpad;
     }
-    // Store in RAM
-    else {
-        *(short*)(ram + src + imm) = registers[dst_index];
+
+    /*
+    // Failsafe for OOB writes
+    if (src + imm > MAX_RAM_ADDR) {
+        throw std::out_of_range("MIPS ERROR: Attempted to write to invalid memory region: " + std::to_string(src + imm + RAM_BASE_OFFSET));
     }
+    */
+
+    // Store in buffer
+    *(short*)(dst_buf + src + imm) = registers[dst_index];
 
     Log::Debug(
         "PC: %08X  % 6d    "
@@ -1513,8 +1764,7 @@ void MipsEmulator::i_swl(uint src_index, uint dst_index, short imm) {
     // Check if store address is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
-    } else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET
-            && (src & 0x1F800000) != 0x1F800000) {
+    } else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET && (src & 0x1F800000) != 0x1F800000) {
         Log::Error("Tried to write to out of bounds address.\n"
             "PC: %08X  % 6d    "
             "Store word (LEFT) %s (%08X) at %s %08X + %04X (=%08X)"
@@ -1530,19 +1780,27 @@ void MipsEmulator::i_swl(uint src_index, uint dst_index, short imm) {
             src + imm + RAM_BASE_OFFSET,
             registers[dst_index]
         );
-
         return;
     }
 
-    // Store in scratchpad memory or MCTRL1, IO ports, etc. (adjusted so that the target address is the lowest order byte)
+    // Set destination buffer (MIPS RAM by default)
+    byte* dst_buf = ram;
+
+    // Store in scratchpad memory or MCTRL1, IO ports, etc.
     if ((src & 0x1F800000) == 0x1F800000) {
         src -= 0x1F800000;
-        *(uint*)(scratchpad + src + imm - 3) = registers[dst_index];
+        dst_buf = scratchpad;
     }
-    // Store in RAM (adjusted so that the target address is the lowest order byte)
-    else {
-        *(uint*)(ram + src + imm - 3) = registers[dst_index];
+
+    /*
+    // Failsafe for OOB writes
+    if (src + imm > MAX_RAM_ADDR) {
+        throw std::out_of_range("MIPS ERROR: Attempted to write to invalid memory region: " + std::to_string(src + imm + RAM_BASE_OFFSET));
     }
+    */
+
+    // Store in buffer
+    *(uint*)(dst_buf + src + imm - 3) = registers[dst_index];
 
     Log::Debug(
         "PC: %08X  % 6d    "
@@ -1568,8 +1826,8 @@ void MipsEmulator::i_sw(uint src_index, uint dst_index, short imm) {
     // Check if store address is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
-    } else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET
-            && (src & 0x1F800000) != 0x1F800000) {
+    }
+    else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET && (src & 0x1F800000) != 0x1F800000) {
         Log::Error("Tried to write to out of bounds address.\n"
             "PC: %08X  % 6d    "
             "Store word %s (%08X) at %s %08X + %04X (=%08X)"
@@ -1585,19 +1843,27 @@ void MipsEmulator::i_sw(uint src_index, uint dst_index, short imm) {
             src + imm + RAM_BASE_OFFSET,
             registers[dst_index]
         );
-
         return;
     }
+
+    // Set destination buffer (MIPS RAM by default)
+    byte* dst_buf = ram;
 
     // Store in scratchpad memory or MCTRL1, IO ports, etc.
     if ((src & 0x1F800000) == 0x1F800000) {
         src -= 0x1F800000;
-        *(uint*)(scratchpad + src + imm) = registers[dst_index];
+        dst_buf = scratchpad;
     }
-    // Store in RAM
-    else {
-        *(uint*)(ram + src + imm) = registers[dst_index];
+
+    /*
+    // Failsafe for OOB writes
+    if (src + imm > MAX_RAM_ADDR) {
+        throw std::out_of_range("MIPS ERROR: Attempted to write to invalid memory region: " + std::to_string(src + imm + RAM_BASE_OFFSET));
     }
+    */
+
+    // Store in buffer
+    *(uint*)(dst_buf + src + imm) = registers[dst_index];
 
     Log::Debug(
         "PC: %08X  % 6d    "
@@ -1623,8 +1889,8 @@ void MipsEmulator::i_swr(uint src_index, uint dst_index, short imm) {
     // Check if store address is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
-    } else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET
-            && (src & 0x1F800000) != 0x1F800000) {
+    }
+    else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET && (src & 0x1F800000) != 0x1F800000) {
         Log::Error("Tried to write to out of bounds address.\n"
             "PC: %08X  % 6d    "
             "Store word (right) %s (%08X) at %s %08X + %04X (=%08X)"
@@ -1640,19 +1906,27 @@ void MipsEmulator::i_swr(uint src_index, uint dst_index, short imm) {
             src + imm + RAM_BASE_OFFSET,
             registers[dst_index]
         );
-
         return;
     }
+
+    // Set destination buffer (MIPS RAM by default)
+    byte* dst_buf = ram;
 
     // Store in scratchpad memory or MCTRL1, IO ports, etc.
     if ((src & 0x1F800000) == 0x1F800000) {
         src -= 0x1F800000;
-        *(uint*)(scratchpad + src + imm) = registers[dst_index];
+        dst_buf = scratchpad;
     }
-    // Store in RAM
-    else {
-        *(uint*)(ram + src + imm) = registers[dst_index];
+
+    /*
+    // Failsafe for OOB writes
+    if (src + imm > MAX_RAM_ADDR) {
+        throw std::out_of_range("MIPS ERROR: Attempted to write to invalid memory region: " + std::to_string(src + imm + RAM_BASE_OFFSET));
     }
+    */
+
+    // Store in buffer
+    *(uint*)(dst_buf + src + imm) = registers[dst_index];
 
     Log::Debug(
         "PC: %08X  % 6d    "
@@ -1692,8 +1966,8 @@ void MipsEmulator::i_lwc2(uint src_index, uint dst_index, short imm) {
     // Check if address to load is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
-    } else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET
-            && (src & 0x1F800000) != 0x1F800000) {
+    }
+    else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET && (src & 0x1F800000) != 0x1F800000) {
         uint val = *(uint*)(mem_base + src + imm);
         Log::Error("Tried to read out of bounds address.\n"
             "PC: %08X  % 6d    "
@@ -1709,7 +1983,6 @@ void MipsEmulator::i_lwc2(uint src_index, uint dst_index, short imm) {
             dst_index,
             val
         );
-
         return;
     }
 
@@ -1763,8 +2036,8 @@ void MipsEmulator::i_swc2(uint src_index, uint dst_index, short imm) {
     // Check if store address is in addressable memory space
     if (src >= RAM_BASE_OFFSET && src <= RAM_MAX_OFFSET) {
         src -= RAM_BASE_OFFSET;
-    } else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET
-            && (src & 0x1F800000) != 0x1F800000) {
+    }
+    else if (RAM_BASE_OFFSET + src + imm > RAM_MAX_OFFSET && (src & 0x1F800000) != 0x1F800000) {
         byte* ram_offset = mem_base + src + imm;
         uint val = *(uint*)(ram_offset);
         Log::Error("Tried to write to out of bounds address.\n"
@@ -1781,7 +2054,6 @@ void MipsEmulator::i_swc2(uint src_index, uint dst_index, short imm) {
             registers[src_index] + imm,
             *(uint*)(ram_offset)
         );
-
         return;
     }
 
@@ -1968,17 +2240,62 @@ void MipsEmulator::r_jr(uint src_index1, uint src_index2, uint dst_index, uint s
     );
 
     // Execute next opcode
-    num_executed++;
-    uint opcode = *(uint*)(ram + pc + 4);
-    ProcessOpcode(opcode);
-    num_executed--;
+    if (!force_ret) {
+        num_executed++;
+        uint opcode = *(uint*)(ram + pc + 4);
+        ProcessOpcode(opcode);
+        num_executed--;
+    }
+    // Disable force return flag if set
+    else {
+        force_ret = false;
+    }
+
+    // Check if this is a top-level return
+    if (dest == FUNCTION_RETURN - RAM_BASE_OFFSET) {
+        ret_hit = true;
+        return;
+    }
+
+    // Check if address is in RAM
+    if (dest >= RAM_BASE_OFFSET && dest < RAM_MAX_OFFSET) {
+        dest -= RAM_BASE_OFFSET;
+    }
 
     // Check if jump location is within executable bounds
-    if (dest >= 0x00010000 && dest < 0x00200000)
+    if (dest >= 0x00010000 && dest < 0x00200000) {
         pc = dest - 4;
-    // Otherwise return to the calling function
-    else
-        pc = registers[RA];
+    }
+
+    // Check for BIOS function calls
+    else if (dest == 0xA0 || dest == 0xB0 || dest == 0xC0) {
+        // Get the BIOS function ID
+        ushort func_id = registers[T1];
+        const char* func_name = "NULL";
+        if (dest == 0xA0) {
+            func_name = A0_FUNCS[func_id];
+        }
+        else if (dest == 0xB0) {
+            func_name = B0_FUNCS[func_id];
+        }
+        else if (dest == 0xC0) {
+            func_name = C0_FUNCS[func_id];
+        }
+        Log::Debug(
+            "                        ! Skipping BIOS function call :: %02hhX(%04hX) -> %s\n",
+            dest,
+            func_id,
+            func_name
+        );
+        // Return to caller
+        pc = registers[RA] - 4;
+    }
+
+    // Failsafe for OOB jumps
+    else {
+        //pc = registers[RA];
+        throw std::out_of_range("MIPS ERROR: Attempted to jump to invalid memory region: " + std::to_string(dest - 4 + RAM_BASE_OFFSET));
+    }
 }
 
 void MipsEmulator::r_jalr(uint src_index1, uint src_index2, uint dst_index, uint shamt) {
@@ -1994,11 +2311,24 @@ void MipsEmulator::r_jalr(uint src_index1, uint src_index2, uint dst_index, uint
     );
 
     // Execute next opcode
-    num_executed++;
-    uint opcode = *(uint*)(ram + pc + 4);
-    ProcessOpcode(opcode);
-    num_executed--;
+    if (!force_ret) {
+        num_executed++;
+        uint opcode = *(uint*)(ram + pc + 4);
+        ProcessOpcode(opcode);
+        num_executed--;
+    }
+    // Disable force return flag if set
+    else {
+        force_ret = false;
+    }
 
+    // Check if this is a top-level return
+    if (func_start == FUNCTION_RETURN - RAM_BASE_OFFSET) {
+        ret_hit = true;
+        return;
+    }
+
+    /*
     // Check for dedicated image processing functions
     if (func_start == LOAD_IMAGE_ADDR) {
         RECT* rect = (RECT*)(ram + registers[A0]);
@@ -2027,13 +2357,179 @@ void MipsEmulator::r_jalr(uint src_index1, uint src_index2, uint dst_index, uint
         ClearImage(rect, r, g, b);
         return;
     }
+    */
+
+    // Check for dedicated image processing functions
+    if (func_start == LOAD_IMAGE_ADDR) {
+
+        // Get rect data registers
+        uint reg_A0 = registers[A0];
+        uint reg_A1 = registers[A1];
+
+        // Check if address is in the scratchpad area
+        if ((reg_A0 & 0x1F800000) == 0x1F800000) {
+            reg_A0 -= 0x1F800000;
+        }
+        if ((reg_A1 & 0x1F800000) == 0x1F800000) {
+            reg_A1 -= 0x1F800000;
+        }
+
+        // Check if address is in RAM
+        if (reg_A0 >= RAM_BASE_OFFSET && reg_A0 < RAM_MAX_OFFSET) {
+            reg_A0 -= RAM_BASE_OFFSET;
+        }
+        if (reg_A1 >= RAM_BASE_OFFSET && reg_A1 < RAM_MAX_OFFSET) {
+            reg_A1 -= RAM_BASE_OFFSET;
+        }
+
+        RECT* rect = (RECT*)(ram + reg_A0);
+        byte* src = (byte*)(ram + reg_A1);
+        LoadImage(rect, src);
+        return;
+    }
+    else if (func_start == STORE_IMAGE_ADDR) {
+
+        // Get rect data registers
+        uint reg_A0 = registers[A0];
+        uint reg_A1 = registers[A1];
+
+        // Check if address is in the scratchpad area
+        if ((reg_A0 & 0x1F800000) == 0x1F800000) {
+            reg_A0 -= 0x1F800000;
+        }
+        if ((reg_A1 & 0x1F800000) == 0x1F800000) {
+            reg_A1 -= 0x1F800000;
+        }
+
+        // Check if address is in RAM
+        if (reg_A0 >= RAM_BASE_OFFSET && reg_A0 < RAM_MAX_OFFSET) {
+            reg_A0 -= RAM_BASE_OFFSET;
+        }
+        if (reg_A1 >= RAM_BASE_OFFSET && reg_A1 < RAM_MAX_OFFSET) {
+            reg_A1 -= RAM_BASE_OFFSET;
+        }
+
+        RECT* rect = (RECT*)(ram + reg_A0);
+        byte* dst = (byte*)(ram + reg_A1);
+        StoreImage(rect, dst);
+        return;
+    }
+    else if (func_start == MOVE_IMAGE_ADDR) {
+
+        // Get rect data registers
+        uint reg_A0 = registers[A0];
+        uint reg_A1 = registers[A1];
+        uint reg_A2 = registers[A2];
+
+        // Check if address is in the scratchpad area
+        if ((reg_A0 & 0x1F800000) == 0x1F800000) {
+            reg_A0 -= 0x1F800000;
+        }
+        if ((reg_A1 & 0x1F800000) == 0x1F800000) {
+            reg_A1 -= 0x1F800000;
+        }
+        if ((reg_A2 & 0x1F800000) == 0x1F800000) {
+            reg_A2 -= 0x1F800000;
+        }
+
+        // Check if address is in RAM
+        if (reg_A0 >= RAM_BASE_OFFSET && reg_A0 < RAM_MAX_OFFSET) {
+            reg_A0 -= RAM_BASE_OFFSET;
+        }
+        if (reg_A1 >= RAM_BASE_OFFSET && reg_A1 < RAM_MAX_OFFSET) {
+            reg_A1 -= RAM_BASE_OFFSET;
+        }
+        if (reg_A2 >= RAM_BASE_OFFSET && reg_A2 < RAM_MAX_OFFSET) {
+            reg_A2 -= RAM_BASE_OFFSET;
+        }
+
+        RECT* rect = (RECT*)(ram + reg_A0);
+        int x = *(int*)(ram + reg_A1);
+        int y = *(int*)(ram + reg_A2);
+        MoveImage(rect, x, y);
+        return;
+    }
+    else if (func_start == CLEAR_IMAGE_ADDR) {
+
+        // Get rect data registers
+        uint reg_A0 = registers[A0];
+        uint reg_A1 = registers[A1];
+        uint reg_A2 = registers[A2];
+        uint reg_A3 = registers[A3];
+
+        // Check if address is in the scratchpad area
+        if ((reg_A0 & 0x1F800000) == 0x1F800000) {
+            reg_A0 -= 0x1F800000;
+        }
+        if ((reg_A1 & 0x1F800000) == 0x1F800000) {
+            reg_A1 -= 0x1F800000;
+        }
+        if ((reg_A2 & 0x1F800000) == 0x1F800000) {
+            reg_A2 -= 0x1F800000;
+        }
+        if ((reg_A3 & 0x1F800000) == 0x1F800000) {
+            reg_A3 -= 0x1F800000;
+        }
+
+        // Check if address is in RAM
+        if (reg_A0 >= RAM_BASE_OFFSET && reg_A0 < RAM_MAX_OFFSET) {
+            reg_A0 -= RAM_BASE_OFFSET;
+        }
+        if (reg_A1 >= RAM_BASE_OFFSET && reg_A1 < RAM_MAX_OFFSET) {
+            reg_A1 -= RAM_BASE_OFFSET;
+        }
+        if (reg_A2 >= RAM_BASE_OFFSET && reg_A2 < RAM_MAX_OFFSET) {
+            reg_A2 -= RAM_BASE_OFFSET;
+        }
+        if (reg_A3 >= RAM_BASE_OFFSET && reg_A3 < RAM_MAX_OFFSET) {
+            reg_A3 -= RAM_BASE_OFFSET;
+        }
+
+        RECT* rect = (RECT*)(ram + reg_A0);
+        byte r = *(byte*)(ram + reg_A1);
+        byte g = *(byte*)(ram + reg_A2);
+        byte b = *(byte*)(ram + reg_A3);
+        ClearImage(rect, r, g, b);
+        return;
+    }
 
     // Check if jump location is within executable bounds
     if (func_start >= 0x00010000 && func_start < 0x00200000) {
         // Save PC in RA and set PC to function address
-        registers[RA] = pc;
+        registers[RA] = pc + 4;
         pc = func_start - 4;
     }
+
+    // Check for BIOS function calls
+    else if (func_start == 0xA0 || func_start == 0xB0 || func_start == 0xC0) {
+        // Get the BIOS function ID
+        ushort func_id = registers[T1];
+        const char* func_name = "NULL";
+        if (func_start == 0xA0) {
+            func_name = A0_FUNCS[func_id];
+        }
+        else if (func_start == 0xB0) {
+            func_name = B0_FUNCS[func_id];
+        }
+        else if (func_start == 0xC0) {
+            func_name = C0_FUNCS[func_id];
+        }
+        Log::Debug(
+            "                        ! Skipping BIOS function call :: %02hhX(%04hX) -> %s\n",
+            func_start,
+            func_id,
+            func_name
+        );
+        // Return to caller
+        pc = registers[RA] - 4;
+    }
+
+    // Failsafe for OOB jumps
+    /*
+    else {
+        throw std::out_of_range("MIPS ERROR: Attempted to jump to invalid memory region: " + std::to_string(func_start - 4 + RAM_BASE_OFFSET));
+    }
+     */
 }
 
 void MipsEmulator::r_mfhi(uint src_index1, uint src_index2, uint dst_index, uint shamt) {
@@ -2455,14 +2951,60 @@ void MipsEmulator::j_j(uint offset) {
     );
 
     // Execute the next instruction before making the jump because MIPS
-    num_executed++;
-    uint opcode = *(uint*)(ram + pc + 4);
-    ProcessOpcode(opcode);
-    num_executed--;
+    if (!force_ret) {
+        num_executed++;
+        uint opcode = *(uint*)(ram + pc + 4);
+        ProcessOpcode(opcode);
+        num_executed--;
+    }
+    // Disable force return flag if set
+    else {
+        force_ret = false;
+    }
+
+    // Check if this is a top-level return
+    if (func_start == FUNCTION_RETURN - RAM_BASE_OFFSET) {
+        ret_hit = true;
+        return;
+    }
+
+    // Check if address is in RAM
+    if (func_start >= RAM_BASE_OFFSET && func_start < RAM_MAX_OFFSET) {
+        func_start -= RAM_BASE_OFFSET;
+    }
 
     // Check if jump location is within executable bounds
     if (func_start >= 0x00010000 && func_start < 0x00200000) {
         pc = func_start - 4;
+    }
+
+    // Check for BIOS function calls
+    else if (func_start == 0xA0 || func_start == 0xB0 || func_start == 0xC0) {
+        // Get the BIOS function ID
+        ushort func_id = registers[T1];
+        const char* func_name = "NULL";
+        if (func_start == 0xA0) {
+            func_name = A0_FUNCS[func_id];
+        }
+        else if (func_start == 0xB0) {
+            func_name = B0_FUNCS[func_id];
+        }
+        else if (func_start == 0xC0) {
+            func_name = C0_FUNCS[func_id];
+        }
+        Log::Debug(
+            "                        ! Skipping BIOS function call :: %02hhX(%04hX) -> %s\n",
+            func_start,
+            func_id,
+            func_name
+        );
+        // Return to caller
+        pc = registers[RA] - 4;
+    }
+
+    // Failsafe for OOB jumps
+    else {
+        throw std::out_of_range("MIPS ERROR: Attempted to jump to invalid memory region: " + std::to_string(func_start - 4 + RAM_BASE_OFFSET));
     }
 }
 
@@ -2477,57 +3019,196 @@ void MipsEmulator::j_jal(uint offset) {
     );
 
     // Execute the next instruction before making the jump because MIPS
-    num_executed++;
-    uint opcode = *(uint*)(ram + pc + 4);
-    ProcessOpcode(opcode);
-    num_executed--;
+    if (!force_ret) {
+        num_executed++;
+        uint opcode = *(uint*)(ram + pc + 4);
+        ProcessOpcode(opcode);
+        num_executed--;
+    }
+    // Disable force return flag if set
+    else {
+        force_ret = false;
+    }
+
+    // Check if this is a top-level return
+    if (func_start == FUNCTION_RETURN - RAM_BASE_OFFSET) {
+        ret_hit = true;
+        return;
+    }
 
     // Check for dedicated image processing functions
     if (func_start == LOAD_IMAGE_ADDR) {
+
+        // Get rect data registers
         uint reg_A0 = registers[A0];
         uint reg_A1 = registers[A1];
 
         // Check if address is in the scratchpad area
+        if ((reg_A0 & 0x1F800000) == 0x1F800000) {
+            reg_A0 -= 0x1F800000;
+        }
         if ((reg_A1 & 0x1F800000) == 0x1F800000) {
             reg_A1 -= 0x1F800000;
         }
 
         // Check if address is in RAM
+        if (reg_A0 >= RAM_BASE_OFFSET && reg_A0 < RAM_MAX_OFFSET) {
+            reg_A0 -= RAM_BASE_OFFSET;
+        }
         if (reg_A1 >= RAM_BASE_OFFSET && reg_A1 < RAM_MAX_OFFSET) {
             reg_A1 -= RAM_BASE_OFFSET;
         }
-        RECT* rect = (RECT*)(ram + registers[A0]);
+
+        RECT* rect = (RECT*)(ram + reg_A0);
         byte* src = (byte*)(ram + reg_A1);
         LoadImage(rect, src);
         return;
     }
     else if (func_start == STORE_IMAGE_ADDR) {
-        RECT* rect = (RECT*)(ram + registers[A0]);
-        byte* dst = (byte*)(ram + registers[A1]);
+
+        // Get rect data registers
+        uint reg_A0 = registers[A0];
+        uint reg_A1 = registers[A1];
+
+        // Check if address is in the scratchpad area
+        if ((reg_A0 & 0x1F800000) == 0x1F800000) {
+            reg_A0 -= 0x1F800000;
+        }
+        if ((reg_A1 & 0x1F800000) == 0x1F800000) {
+            reg_A1 -= 0x1F800000;
+        }
+
+        // Check if address is in RAM
+        if (reg_A0 >= RAM_BASE_OFFSET && reg_A0 < RAM_MAX_OFFSET) {
+            reg_A0 -= RAM_BASE_OFFSET;
+        }
+        if (reg_A1 >= RAM_BASE_OFFSET && reg_A1 < RAM_MAX_OFFSET) {
+            reg_A1 -= RAM_BASE_OFFSET;
+        }
+
+        RECT* rect = (RECT*)(ram + reg_A0);
+        byte* dst = (byte*)(ram + reg_A1);
         StoreImage(rect, dst);
         return;
     }
     else if (func_start == MOVE_IMAGE_ADDR) {
-        RECT* rect = (RECT*)(ram + registers[A0]);
-        int x = *(int*)(ram + registers[A1]);
-        int y = *(int*)(ram + registers[A2]);
+
+        // Get rect data registers
+        uint reg_A0 = registers[A0];
+        uint reg_A1 = registers[A1];
+        uint reg_A2 = registers[A2];
+
+        // Check if address is in the scratchpad area
+        if ((reg_A0 & 0x1F800000) == 0x1F800000) {
+            reg_A0 -= 0x1F800000;
+        }
+        if ((reg_A1 & 0x1F800000) == 0x1F800000) {
+            reg_A1 -= 0x1F800000;
+        }
+        if ((reg_A2 & 0x1F800000) == 0x1F800000) {
+            reg_A2 -= 0x1F800000;
+        }
+
+        // Check if address is in RAM
+        if (reg_A0 >= RAM_BASE_OFFSET && reg_A0 < RAM_MAX_OFFSET) {
+            reg_A0 -= RAM_BASE_OFFSET;
+        }
+        if (reg_A1 >= RAM_BASE_OFFSET && reg_A1 < RAM_MAX_OFFSET) {
+            reg_A1 -= RAM_BASE_OFFSET;
+        }
+        if (reg_A2 >= RAM_BASE_OFFSET && reg_A2 < RAM_MAX_OFFSET) {
+            reg_A2 -= RAM_BASE_OFFSET;
+        }
+
+        RECT* rect = (RECT*)(ram + reg_A0);
+        int x = *(int*)(ram + reg_A1);
+        int y = *(int*)(ram + reg_A2);
         MoveImage(rect, x, y);
         return;
     }
     else if (func_start == CLEAR_IMAGE_ADDR) {
-        RECT* rect = (RECT*)(ram + registers[A0]);
-        byte r = *(byte*)(ram + registers[A1]);
-        byte g = *(byte*)(ram + registers[A2]);
-        byte b = *(byte*)(ram + registers[A3]);
+
+        // Get rect data registers
+        uint reg_A0 = registers[A0];
+        uint reg_A1 = registers[A1];
+        uint reg_A2 = registers[A2];
+        uint reg_A3 = registers[A3];
+
+        // Check if address is in the scratchpad area
+        if ((reg_A0 & 0x1F800000) == 0x1F800000) {
+            reg_A0 -= 0x1F800000;
+        }
+        if ((reg_A1 & 0x1F800000) == 0x1F800000) {
+            reg_A1 -= 0x1F800000;
+        }
+        if ((reg_A2 & 0x1F800000) == 0x1F800000) {
+            reg_A2 -= 0x1F800000;
+        }
+        if ((reg_A3 & 0x1F800000) == 0x1F800000) {
+            reg_A3 -= 0x1F800000;
+        }
+
+        // Check if address is in RAM
+        if (reg_A0 >= RAM_BASE_OFFSET && reg_A0 < RAM_MAX_OFFSET) {
+            reg_A0 -= RAM_BASE_OFFSET;
+        }
+        if (reg_A1 >= RAM_BASE_OFFSET && reg_A1 < RAM_MAX_OFFSET) {
+            reg_A1 -= RAM_BASE_OFFSET;
+        }
+        if (reg_A2 >= RAM_BASE_OFFSET && reg_A2 < RAM_MAX_OFFSET) {
+            reg_A2 -= RAM_BASE_OFFSET;
+        }
+        if (reg_A3 >= RAM_BASE_OFFSET && reg_A3 < RAM_MAX_OFFSET) {
+            reg_A3 -= RAM_BASE_OFFSET;
+        }
+
+        RECT* rect = (RECT*)(ram + reg_A0);
+        byte r = *(byte*)(ram + reg_A1);
+        byte g = *(byte*)(ram + reg_A2);
+        byte b = *(byte*)(ram + reg_A3);
         ClearImage(rect, r, g, b);
         return;
+    }
+
+    // Check if address is in RAM
+    if (func_start >= RAM_BASE_OFFSET && func_start < RAM_MAX_OFFSET) {
+        func_start -= RAM_BASE_OFFSET;
     }
 
 
     // Check if jump location is within executable bounds
     if (func_start >= 0x00010000 && func_start < 0x00200000) {
-        registers[31] = pc;
+        registers[31] = pc + 4;
         pc = func_start - 4;
+    }
+
+    // Check for BIOS function calls
+    else if (func_start == 0xA0 || func_start == 0xB0 || func_start == 0xC0) {
+        // Get the BIOS function ID
+        ushort func_id = registers[T1];
+        const char* func_name = "NULL";
+        if (func_start == 0xA0) {
+            func_name = A0_FUNCS[func_id];
+        }
+        else if (func_start == 0xB0) {
+            func_name = B0_FUNCS[func_id];
+        }
+        else if (func_start == 0xC0) {
+            func_name = C0_FUNCS[func_id];
+        }
+        Log::Debug(
+            "                        ! Skipping BIOS function call :: %02hhX(%04hX) -> %s\n",
+            func_start,
+            func_id,
+            func_name
+        );
+        // Return to caller
+        pc = registers[RA] - 4;
+    }
+
+    // Failsafe for OOB jumps
+    else {
+        throw std::out_of_range("MIPS ERROR: Attempted to jump to invalid memory region: " + std::to_string(func_start - 4 + RAM_BASE_OFFSET));
     }
 }
 

@@ -26,7 +26,7 @@ typedef struct SpritePart {
 	ushort width = 0;
 	ushort height = 0;
 	ushort clut_offset = 0;
-	ushort texture_page = 0;
+	ushort tileset_offset = 0;
 	ushort texture_start_x = 0;
 	ushort texture_start_y = 0;
 	ushort texture_end_x = 0;

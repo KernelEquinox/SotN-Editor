@@ -7,6 +7,331 @@
 #include "entities.h"
 #include "common.h"
 
+const char* const A0_FUNCS[192] = {
+    "FileOpen(filename,accessmode)",
+    "FileSeek(fd,offset,seektype)",
+    "FileRead(fd,dst,length)",
+    "FileWrite(fd,src,length)",
+    "FileClose(fd)",
+    "FileIoctl(fd,cmd,arg)",
+    "exit(exitcode)",
+    "FileGetDeviceFlag(fd)",
+    "FileGetc(fd)",
+    "FilePutc(char,fd)",
+    "todigit(char)",
+    "!! atof(src)",
+    "strtoul(src,src_end,base)",
+    "strtol(src,src_end,base)",
+    "abs(val)",
+    "labs(val)",
+    "atoi(src)",
+    "atol(src)",
+    "atob(src,num_dst)",
+    "SaveState(buf)",
+    "RestoreState(buf,param)",
+    "strcat(dst,src)",
+    "strncat(dst,src,maxlen)",
+    "strcmp(str1,str2)",
+    "strncmp(str1,str2,maxlen)",
+    "strcpy(dst,src)",
+    "strncpy(dst,src,maxlen)",
+    "strlen(src)",
+    "index(src,char)",
+    "rindex(src,char)",
+    "strchr(src,char)",
+    "strrchr(src,char)",
+    "strpbrk(src,list)",
+    "strspn(src,list)",
+    "strcspn(src,list)",
+    "strtok(src,list)  ;use strtok(0,list) in further calls",
+    "! strstr(str,substr)",
+    "toupper(char)",
+    "tolower(char)",
+    "bcopy(src,dst,len)",
+    "bzero(dst,len)",
+    "! bcmp(ptr1,ptr2,len)",
+    "memcpy(dst,src,len)",
+    "memset(dst,fillbyte,len)",
+    "! memmove(dst,src,len)",
+    "! memcmp(src1,src2,len)",
+    "memchr(src,scanbyte,len)",
+    "rand()",
+    "srand(seed)",
+    "qsort(base,nel,width,callback)",
+    "!! strtod(src,src_end)",
+    "malloc(size)",
+    "free(buf)",
+    "lsearch(key,base,nel,width,callback)",
+    "bsearch(key,base,nel,width,callback)",
+    "calloc(sizx,sizy)",
+    "realloc(old_buf,new_siz)",
+    "InitHeap(addr,size)",
+    "SystemErrorExit(exitcode)",
+    "std_in_getchar()",
+    "std_out_putchar(char)",
+    "std_in_gets(dst)",
+    "std_out_puts(src)",
+    "printf(fmt,...)",
+    "SystemErrorUnresolvedException()",
+    "LoadExeHeader(filename,headerbuf)",
+    "LoadExeFile(filename,headerbuf)",
+    "DoExecute(headerbuf,param1,param2)",
+    "FlushCache()",
+    "init_a0_b0_c0_vectors",
+    "GPU_dw(Xdst,Ydst,Xsiz,Ysiz,src)",
+    "gpu_send_dma(Xdst,Ydst,Xsiz,Ysiz,src)",
+    "SendGP1Command(gp1cmd)",
+    "GPU_cw(gp0cmd)",
+    "GPU_cwp(src,num)",
+    "send_gpu_linked_list(src)",
+    "gpu_abort_dma()",
+    "GetGPUStatus()",
+    "gpu_sync()",
+    "SystemError",
+    "SystemError",
+    "LoadAndExecute(filename,stackbase,stackoffset)",
+    "SystemError / GetSysSp()",
+    "SystemError / set_ioabort_handler(src)",
+    "CdInit_1()",
+    "_bu_init_1()",
+    "CdRemove_1()",
+    "NOP",
+    "NOP",
+    "NOP",
+    "NOP",
+    "dev_tty_init()",
+    "dev_tty_open(fcb,and unused:\"path\name\",accessmode)",
+    "dev_tty_in_out(fcb,cmd)",
+    "dev_tty_ioctl(fcb,cmd,arg)",
+    "dev_cd_open(fcb,\"path\name\",accessmode)",
+    "dev_cd_read(fcb,dst,len)",
+    "dev_cd_close(fcb)",
+    "dev_cd_firstfile(fcb,\"path\name\",direntry)",
+    "dev_cd_nextfile(fcb,direntry)",
+    "dev_cd_chdir(fcb,\"path\")",
+    "dev_card_open(fcb,\"path\name\",accessmode)",
+    "dev_card_read(fcb,dst,len)",
+    "dev_card_write(fcb,src,len)",
+    "dev_card_close(fcb)",
+    "dev_card_firstfile(fcb,\"path\name\",direntry)",
+    "dev_card_nextfile(fcb,direntry)",
+    "dev_card_erase(fcb,\"path\name\")",
+    "dev_card_undelete(fcb,\"path\name\")",
+    "dev_card_format(fcb)",
+    "dev_card_rename(fcb1,\"path\name1\",fcb2,\"path\name2\")",
+    "dev_card_clear_error_or_so(fcb)",
+    "_bu_init_2()",
+    "CdInit_2()",
+    "CdRemove_2()",
+    "NOP",
+    "NOP",
+    "NOP",
+    "NOP",
+    "NOP",
+    "CdAsyncSeekL(src)",
+    "NOP -> DTL-H2000_CdAsyncSeekP(src)",
+    "NOP -> DTL-H2000_CdAsyncGetlocL(dst?)",
+    "NOP -> DTL-H2000_CdAsyncGetlocP(dst?)",
+    "CdAsyncGetStatus(dst)",
+    "NOP -> DTL-H2000_CdAsyncGetParam(dst?)",
+    "CdAsyncReadSector(count,dst,mode)",
+    "NOP -> DTL-H2000_CdAsyncReadWithNewMode(mode)",
+    "NOP -> DTL-H2000_CdAsyncReadFinalCount1(r4)",
+    "CdAsyncSetMode(mode)",
+    "NOP -> DTL-H2000_CdAsyncMotorOn()",
+    "NOP -> DTL-H2000_CdAsyncPause()",
+    "NOP -> DTL-H2000_CdAsyncPlayOrReadS()",
+    "NOP -> DTL-H2000_CdAsyncStop()",
+    "NOP -> DTL-H2000_CdAsyncMute()",
+    "NOP -> DTL-H2000_CdAsyncDemute()",
+    "NOP -> DTL-H2000_CdSetAudioVolume(src)  ;4-byte src",
+    "NOP -> DTL-H2000_CdAsyncSetSession1(dst)",
+    "NOP -> DTL-H2000_CdAsyncSetSession(session,dst)",
+    "NOP -> DTL-H2000_CdAsyncForward()",
+    "NOP -> DTL-H2000_CdAsyncBackward()",
+    "NOP -> DTL-H2000_CdAsyncPlay()",
+    "NOP -> DTL-H2000_CdAsyncGetStatSpecial(r4,r5)",
+    "NOP -> DTL-H2000_CdAsyncGetID(r4,r5)",
+    "CdromIoIrqFunc1()",
+    "CdromDmaIrqFunc1()",
+    "CdromIoIrqFunc2()",
+    "CdromDmaIrqFunc2()",
+    "CdromGetInt5errCode(dst1,dst2)",
+    "CdInitSubFunc()",
+    "AddCDROMDevice()",
+    "AddMemCardDevice()",
+    "AddDuartTtyDevice()",
+    "AddDummyTtyDevice()",
+    "SystemError / AddMessageWindowDevice",
+    "SystemError / AddCdromSimDevice",
+    "SetConf(num_EvCB,num_TCB,stacktop)",
+    "GetConf(num_EvCB_dst,num_TCB_dst,stacktop_dst)",
+    "SetCdromIrqAutoAbort(type,flag)",
+    "SetMemSize(megabytes)",
+    "WarmBoot()",
+    "SystemErrorBootOrDiskFailure(type,errorcode)",
+    "EnqueueCdIntr()",
+    "DequeueCdIntr()",
+    "CdGetLbn(filename)",
+    "CdReadSector(count,sector,buffer)",
+    "CdGetStatus()",
+    "bu_callback_okay()",
+    "bu_callback_err_write()",
+    "bu_callback_err_busy()",
+    "bu_callback_err_eject()",
+    "_card_info(port)",
+    "_card_async_load_directory(port)",
+    "set_card_auto_format(flag)",
+    "bu_callback_err_prev_write()",
+    "card_write_test(port)",
+    "NOP",
+    "NOP",
+    "ioabort_raw(param)",
+    "NOP",
+    "GetSystemInfo(index)",
+    "NOP",
+    "NOP",
+    "NOP",
+    "NOP",
+    "NOP",
+    "NOP",
+    "NOP",
+    "NOP",
+    "NOP",
+    "NOP",
+    "NOP"
+};
+
+const char* const B0_FUNCS[94] = {
+    "alloc_kernel_memory(size)",
+    "free_kernel_memory(buf)",
+    "init_timer(t,reload,flags)",
+    "get_timer(t)",
+    "enable_timer_irq(t)",
+    "disable_timer_irq(t)",
+    "restart_timer(t)",
+    "DeliverEvent(class, spec)",
+    "OpenEvent(class,spec,mode,func)",
+    "CloseEvent(event)",
+    "WaitEvent(event)",
+    "TestEvent(event)",
+    "EnableEvent(event)",
+    "DisableEvent(event)",
+    "OpenThread(reg_PC,reg_SP_FP,reg_GP)",
+    "CloseThread(handle)",
+    "ChangeThread(handle)",
+    "NOP",
+    "InitPad(buf1,siz1,buf2,siz2)",
+    "StartPad()",
+    "StopPad()",
+    "OutdatedPadInitAndStart(type,button_dest,unused,unused)",
+    "OutdatedPadGetButtons()",
+    "ReturnFromException()",
+    "SetDefaultExitFromException()",
+    "SetCustomExitFromException(addr)",
+    "SystemError",
+    "SystemError",
+    "SystemError",
+    "SystemError",
+    "SystemError",
+    "SystemError",
+    "UnDeliverEvent(class,spec)",
+    "SystemError",
+    "SystemError",
+    "SystemError",
+    "NOP",
+    "NOP",
+    "NOP",
+    "NOP",
+    "NOP",
+    "NOP",
+    "SystemError",
+    "SystemError",
+    "NOP",
+    "NOP",
+    "NOP",
+    "NOP",
+    "NOP",
+    "NOP",
+    "FileOpen(filename,accessmode)",
+    "FileSeek(fd,offset,seektype)",
+    "FileRead(fd,dst,length)",
+    "FileWrite(fd,src,length)",
+    "FileClose(fd)",
+    "FileIoctl(fd,cmd,arg)",
+    "exit(exitcode)",
+    "FileGetDeviceFlag(fd)",
+    "FileGetc(fd)",
+    "FilePutc(char,fd)",
+    "std_in_getchar()",
+    "std_out_putchar(char)",
+    "std_in_gets(dst)",
+    "std_out_puts(src)",
+    "chdir(name)",
+    "FormatDevice(devicename)",
+    "firstfile(filename,direntry)",
+    "nextfile(direntry)",
+    "FileRename(old_filename,new_filename)",
+    "FileDelete(filename)",
+    "FileUndelete(filename)",
+    "AddDevice(device_info)",
+    "RemoveDevice(device_name_lowercase)",
+    "PrintInstalledDevices()",
+    "InitCard(pad_enable)",
+    "StartCard()",
+    "StopCard()",
+    "_card_info_subfunc(port)",
+    "write_card_sector(port,sector,src)",
+    "read_card_sector(port,sector,dst)",
+    "allow_new_card()",
+    "Krom2RawAdd(shiftjis_code)",
+    "SystemError",
+    "Krom2Offset(shiftjis_code)",
+    "GetLastError()",
+    "GetLastFileError(fd)",
+    "GetC0Table",
+    "GetB0Table",
+    "get_bu_callback_port()",
+    "testdevice(devicename)",
+    "SystemError",
+    "ChangeClearPad(int)",
+    "get_card_status(slot)",
+    "wait_card_status(slot)"
+};
+
+const char* const C0_FUNCS[30] = {
+    "EnqueueTimerAndVblankIrqs(priority)",
+    "EnqueueSyscallHandler(priority)",
+    "SysEnqIntRP(priority,struc)",
+    "SysDeqIntRP(priority,struc)",
+    "get_free_EvCB_slot()",
+    "get_free_TCB_slot()",
+    "ExceptionHandler()",
+    "InstallExceptionHandlers()",
+    "SysInitMemory(addr,size)",
+    "SysInitKernelVariables()",
+    "ChangeClearRCnt(t,flag)",
+    "SystemError",
+    "InitDefInt(priority)",
+    "SetIrqAutoAck(irq,flag)",
+    "NOP -> DTL-H2000_dev_sio_init",
+    "NOP -> DTL-H2000_dev_sio_open",
+    "NOP -> DTL-H2000_dev_sio_in_out",
+    "NOP -> DTL-H2000_dev_sio_ioctl",
+    "InstallDevices(ttyflag)",
+    "FlushStdInOutPut()",
+    "NOP -> DTL-H2000_SystemError",
+    "tty_cdevinput(circ,char)",
+    "tty_cdevscan()",
+    "tty_circgetc(circ)",
+    "tty_circputc(char,circ)",
+    "ioabort(txt1,txt2)",
+    "set_card_find_mode(mode)",
+    "KernelRedirect(ttyflag)",
+    "AdjustA0Table()",
+    "get_card_find_mode()"
+};
+
 // MIPS function type declarations
 typedef void (*i_fn)(uint, uint, short);
 typedef void (*r_fn)(uint, uint, uint, uint);
@@ -47,20 +372,40 @@ const uint SP = 29;
 const uint FP = 30;
 const uint RA = 31;
 
+// Size of RAM
+const uint RAM_SIZE = 0x200000;
+const uint SAVE_STATE_SIZE = 0x180000;
+
 // Main return value
 const uint FUNCTION_RETURN = 0xFFFFFFFF;
 
 // Maximum instruction executions (to prevent infinite loops)
-const uint MAX_EXECUTIONS = 65536;
+const uint MAX_EXECUTIONS = 1 << 20;
 
 // CLUT data size
 const uint CLUT_DATA_SIZE = 0x6000;
+
+// Integer value of JR RA instruction
+const uint INST_JR_RA = 0x03E00008;
 
 // These are used for detecting locations of framebuffer-related operations
 const uint LOAD_IMAGE_ADDR = 0x00012B24;
 const uint STORE_IMAGE_ADDR = 0x00012B88;
 const uint MOVE_IMAGE_ADDR = 0x00012BEC;
 const uint CLEAR_IMAGE_ADDR = 0x00012A90;
+
+// These are used to skip a few functions
+const uint SS_VAB_WAIT_ADDR = 0x000E3278;
+const uint SPU_INIT_ADDR = 0x00027274;
+const uint SETUP_AUDIO_ADDR = 0x001325D8;
+const uint VSYNC_ADDR = 0x00015308;
+const uint DRAWSYNC_ADDR = 0x0001290C;
+const uint ADDQUE_ADDR = 0x00014670;
+const uint STARTINTR_ADDR = 0x00015694;
+const uint DMA_CALLBACK_ADDR = 0x0001555C;
+
+// RAM bounds checking
+const uint MAX_RAM_ADDR = 0x00200000;
 
 // Class for general utilities
 class MipsEmulator {
@@ -109,12 +454,16 @@ class MipsEmulator {
         static void SetSotNBinary(const char* filename);
         static void LoadMapFile(const char* filename);
         static void StoreMapCLUT(uint offset, uint count, byte* data);
+        static void ClearRegisters();
         static void Initialize();
         static void Reset();
+        static void InitSotNBinary();
+        static void SaveState();
+        static void LoadState();
         //static void ClearRegisters();
         static void Cleanup();
         static void ProcessOpcode(uint opcode);
-        static void ProcessFunction(uint func_addr);
+        static void ProcessFunction(uint func_addr, uint end_addr = 0);
         static void LoadFile(const char* filename, uint addr);
         static uint ReadIntFromRAM(uint addr);
         static void WriteIntToRAM(uint addr, uint value);
@@ -122,6 +471,7 @@ class MipsEmulator {
         static void CopyFromRAM(uint addr, void* dst, uint count);
         static std::vector<Entity> FindNewEntities(int exclude_addr);
         static std::vector<Entity> ProcessEntities();
+        static void ClearEntities();
 
         // Used for framebuffer operations
         static void LoadImage(RECT* rect, byte* src);
@@ -381,6 +731,9 @@ class MipsEmulator {
         // 24 KB CLUT storage
         static byte* clut_data;
 
+        // 2 MB buffer for save state
+        static byte* save_state_ram;
+
         // Sizes of each binary
         static uint psx_bin_size;
         static uint sotn_bin_size;
@@ -389,6 +742,12 @@ class MipsEmulator {
         // HI and LO registers (DIV, MULT, etc.)
         static uint hi;
         static uint lo;
+
+        // Whether a function is being forcibly returned from
+        static bool force_ret;
+
+        // Whether a top-level return is occurring
+        static bool ret_hit;
 };
 
 #endif //SOTN_EDITOR_MIPS

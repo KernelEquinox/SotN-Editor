@@ -22,10 +22,10 @@ class Room {
 		byte y_start;
 		byte x_end;
 		byte y_end;
-		byte tile_layout_id;
-		// If flag is 0xFF, use tile_layout_id as an index into the lookup table
+		byte tile_layer_id;
+		// If flag is 0xFF, use tile_layer_id as an index into the lookup table
 		// at 0x800A2464 (each entry being 5 16-bit integers)
-		byte load_flag;
+		byte load_flags;
 		byte entity_layout_id;
 		byte entity_graphics_id;
 
@@ -36,7 +36,7 @@ class Room {
         std::map<uint, GLuint> entity_tilesets;
 
         // Entity texture pages
-        std::map<uint, GLuint> texture_pages;
+        std::vector<GLuint> texture_pages;
 
 		// Tile layers
 		TileLayer fg_layer;
@@ -46,7 +46,7 @@ class Room {
         GLuint fg_texture;
         GLuint bg_texture;
 
-		// Room dimensions
+		// Room dimensions (measured in cells)
 		uint width;
 		uint height;
 
@@ -54,6 +54,10 @@ class Room {
         std::map<uint, std::vector<EntitySpritePart>> bg_ordering_table;
         std::map<uint, std::vector<EntitySpritePart>> mid_ordering_table;
         std::map<uint, std::vector<EntitySpritePart>> fg_ordering_table;
+
+        // Dedicated 1/4 VRAM chunk for each room (512 x 256)
+        GLuint vram;
+        GLuint expanded_vram;
 
 
 		void LoadEntityTilesets();
